@@ -4,7 +4,7 @@ import re
 from typing import Dict, Iterator, List, Tuple, NewType
 
 from allennlp.data import DatasetReader, Instance, TokenIndexer, Tokenizer, Token, Field
-from allennlp.data.fields import TextField, SequenceLabelField
+from allennlp.data.fields import TextField, SequenceLabelField, MetadataField
 from allennlp.data.tokenizers import SentenceSplitter
 from allennlp.data.tokenizers.sentence_splitter import SpacySentenceSplitter
 
@@ -106,6 +106,9 @@ class ACE2005TriggerReader(DatasetReader):
             # For evaluation phase, only `raw_sentence_events` are used
             # for fair comparison without any ground truth information loss.
             if start_idx is None or end_idx is None:
+                logger.warning(f'Mention-Token span mismatch:'
+                               f'{sentence[relative_start:relative_end]!r} !='
+                               f'...{tokens[start_idx or end_idx or 0]}...')
                 continue
 
             # Now, populate `labels` and `sentence_events` with retained events.
@@ -115,12 +118,24 @@ class ACE2005TriggerReader(DatasetReader):
             for idx in range(start_idx + 1, end_idx + 1):
                 event_labels[idx] = f'I-{label}'
 
-        return self._build_instance(tokens, event_labels)
+        pattern = ''.join(label[0] for label in event_labels)
+        if 'IB' in pattern or 'BB' in pattern:
+            # Overall there are no `IB`s in ACE2005 (as expected),
+            # but we have found ~15 `BB`s
+            idx = pattern.index('BB')
+            logger.warning(f'Adjacent mentions found: '
+                           f'{pattern.count("BB")} `BB`s, '
+                           f'{pattern.count("IB")} `IB`s'
+                           f'An instance:'
+                           f'... {tokens[idx]} {tokens[idx + 1]} ...')
+        return self._build_instance(tokens, event_labels,
+                                    raw_sentence_events=raw_sentence_events,
+                                    sentence_events=sentence_events)
 
     def _process_doc(self,
                      text: str,
                      event_annotations: Dict[Tuple[int, int], str] = None) -> Iterator[Instance]:
-        # Split the sentences. Non-destructive splitter is needed.
+        # Split the sentences. Non-destructive splitter is needed. e.g. `spacy_raw`
         sentences = self._sentence_splitter.split_sentences(text)
         assert ''.join(sentences) == text
 
@@ -137,15 +152,19 @@ class ACE2005TriggerReader(DatasetReader):
                   sgm_path: Path,
                   apf_xml_path: Path = None) -> Iterator[Instance]:
         text = self._read_sgm_text(sgm_path)
+
+        event_annotations = None
         if apf_xml_path is not None:
             event_annotations = self._read_apf_xml_annotataions(apf_xml_path, text)
-        else:
-            event_annotations = None
+
         yield from self._process_doc(text, event_annotations)
 
     def _read_apf_xml_annotataions(self,
                                    apf_path: Path,
                                    text: str = None) -> Dict[Tuple[int, int], str]:
+        # Annotations are given on document-level, so we are going to capture
+        # char-level event mention spans. Only then the mentions will be filtered
+        # during sentence splitting.
         apf_xml = apf_path.read_text(encoding='utf-8')
         soup = BeautifulSoup(apf_xml, 'xml')
 
@@ -159,33 +178,47 @@ class ACE2005TriggerReader(DatasetReader):
             # TODO Check if the assumption holds in the dataset.
             charseq = event.event_mention.anchor.charseq
 
+            # Char-level start offset, inclusive, relative to document start.
             start = int(charseq.get('START'))
+            # Char-level end offset, exclusive, relative to document start.
             end = int(charseq.get('END')) + 1
-            label = f'{event_type}.{event_subtype}' + charseq.text
+            # Type and Subtype are stored as a single string Type.Subtype
+            label = f'{event_type}.{event_subtype}'
 
             mention = start, end
             event_annotations[mention] = label
 
-            if text is not None and text[start:end] != charseq.text:
-                raise ValueError('mention text mismatch')
+            if text is not None:
+                expected = charseq.text
+                text_found = text[start:end]
+                if text_found != expected:
+                    logger.warning(f'Mention text mismatch: '
+                                   f'Expected: {expected}, '
+                                   f'Found: {text_found}')
+                    # raise ValueError('Mention text mismatch')
 
         return event_annotations
 
     def _build_instance(self,
                         tokens: List[Token],
-                        event_labels: List[str] = None) -> Instance:
+                        event_labels: List[str] = None,
+                        **metadata) -> Instance:
         fields: Dict[str, Field] = dict()
 
-        sentence_field = TextField(tokens,
-                                   self._token_indexers)
-        fields['sentence'] = sentence_field
+        # First, populate fields with provided metadata
+        for key, value in metadata.items():
+            fields[key] = MetadataField(value)
+
+        # Building different discrete representations for text embedders.
+        text_field = TextField(tokens, self._token_indexers)
+        fields['text'] = text_field
 
         # Build an Instance without annotations to use in inference phase.
         if event_labels is None:
             return Instance(fields)
 
         event_labels_field = SequenceLabelField(event_labels,
-                                                sentence_field,
+                                                text_field,
                                                 self._event_label_namespace)
         fields['event_labels'] = event_labels_field
 
@@ -207,10 +240,10 @@ class ACE2005TriggerReader(DatasetReader):
                 apf_xml_path = None
 
             # In case of if sgm / xml parsing failed, just skip the document.
-            try:
-                yield from self._read_doc(sgm_path, apf_xml_path)
-            except ValueError:
-                logger.warning('ignoring a document', doc_name)
+            # try:
+            yield from self._read_doc(sgm_path, apf_xml_path)
+            # except ValueError:
+            #     logger.warning(f'Parse error. Ignoring a document {doc_name}')
 
     def text_to_instance(self, *inputs) -> Instance:
         # TODO Implement
