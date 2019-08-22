@@ -4,7 +4,7 @@ local elmo_embedding_dim = 0; // 1024;
 local bert_embedding_dim  = 768;
 
 local embedding_dim = glove_embedding_dim + 3 * char_embedding_dim + elmo_embedding_dim + bert_embedding_dim ;
-
+local encoding_dim = 150;
 
 {
   "dataset_reader": {
@@ -33,7 +33,7 @@ local embedding_dim = glove_embedding_dim + 3 * char_embedding_dim + elmo_embedd
         "type": "word",
         "word_splitter": {
             "type": "spacy",
-            "language": "en_core_sci_sm"
+//            "language": "en_core_sci_sm"
         }
     },
     "sentence_splitter": {
@@ -88,12 +88,19 @@ local embedding_dim = glove_embedding_dim + 3 * char_embedding_dim + elmo_embedd
         }
       }
     },
+    "encoder": {
+        "type": "lstm",
+        "input_size": embedding_dim,
+        "hidden_size": encoding_dim,
+        "num_layers": 1,
+        "bidirectional": true
+    },
   },
   "iterator": {
     "type": "basic",
 //    "sorting_keys": [["text", "num_tokens"]],
 //    "padding_noise": 0.0,
-    "batch_size": 4,
+    "batch_size": 32,
 //    "biggest_batch_first": true
   },
   "trainer": {
