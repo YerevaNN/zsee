@@ -63,7 +63,7 @@ class ACE2005TriggerReader(DatasetReader):
         sentence_start = sentence_offset
         sentence_end = sentence_start + len(sentence)
 
-        # Mention span BIO-tagging has to be done on token-level.
+        # Event mention span tagging has to be done on token-level.
         tokens = self._tokenizer.tokenize(sentence)
 
         # Enumerate all the tokens and prepare char-to-token-id mappings
@@ -114,20 +114,9 @@ class ACE2005TriggerReader(DatasetReader):
             # Now, populate `labels` and `sentence_events` with retained events.
             # These retained events should be only used for training.
             sentence_events[start_idx, end_idx] = label
-            event_labels[start_idx] = f'B-{label}'
-            for idx in range(start_idx + 1, end_idx + 1):
-                event_labels[idx] = f'I-{label}'
+            for idx in range(start_idx, end_idx + 1):
+                event_labels[idx] = label
 
-        pattern = ''.join(label[0] for label in event_labels)
-        if 'IB' in pattern or 'BB' in pattern:
-            # Overall there are no `IB`s in ACE2005 (as expected),
-            # but we have found ~15 `BB`s
-            idx = pattern.index('BB')
-            logger.warning(f'Adjacent mentions found: '
-                           f'{pattern.count("BB")} `BB`s, '
-                           f'{pattern.count("IB")} `IB`s'
-                           f'An instance:'
-                           f'... {tokens[idx]} {tokens[idx + 1]} ...')
         return self._build_instance(tokens, event_labels,
                                     raw_sentence_events=raw_sentence_events,
                                     sentence_events=sentence_events)
@@ -173,29 +162,27 @@ class ACE2005TriggerReader(DatasetReader):
             event_type: str = event.get('TYPE')
             event_subtype: str = event.get('SUBTYPE')
 
-            # Here we assume one-to-one mapping between annotated events
-            # and event mentions.
-            # TODO Check if the assumption holds in the dataset.
-            charseq = event.event_mention.anchor.charseq
+            for event_mention in event.find_all('event_mention'):
+                charseq = event_mention.anchor.charseq
 
-            # Char-level start offset, inclusive, relative to document start.
-            start = int(charseq.get('START'))
-            # Char-level end offset, exclusive, relative to document start.
-            end = int(charseq.get('END')) + 1
-            # Type and Subtype are stored as a single string Type.Subtype
-            label = f'{event_type}.{event_subtype}'
+                # Char-level start offset, inclusive, relative to document start.
+                start = int(charseq.get('START'))
+                # Char-level end offset, exclusive, relative to document start.
+                end = int(charseq.get('END')) + 1
+                # Type and Subtype are stored as a single string Type.Subtype
+                label = f'{event_type}.{event_subtype}'
 
-            mention = start, end
-            event_annotations[mention] = label
+                mention = start, end
+                event_annotations[mention] = label
 
-            if text is not None:
-                expected = charseq.text
-                text_found = text[start:end]
-                if text_found != expected:
-                    logger.warning(f'Mention text mismatch: '
-                                   f'Expected: {expected}, '
-                                   f'Found: {text_found}')
-                    # raise ValueError('Mention text mismatch')
+                if text is not None:
+                    expected = charseq.text
+                    text_found = text[start:end]
+                    if text_found != expected:
+                        logger.warning(f'Mention text mismatch: '
+                                       f'Expected: {expected}, '
+                                       f'Found: {text_found}')
+                        # raise ValueError('Mention text mismatch')
 
         return event_annotations
 
@@ -212,6 +199,8 @@ class ACE2005TriggerReader(DatasetReader):
         # Building different discrete representations for text embedders.
         text_field = TextField(tokens, self._token_indexers)
         fields['text'] = text_field
+        # Additionally, raw tokens are also stored for reverse mapping
+        fields['tokens'] = MetadataField(tokens)
 
         # Build an Instance without annotations to use in inference phase.
         if event_labels is None:
