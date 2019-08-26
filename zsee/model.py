@@ -17,6 +17,7 @@ class ZSEE(Model):
                  vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  encoder: Seq2SeqEncoder,
+                 embeddings_dropout: float = 0,
                  dropout: float = 0,
                  verbose: Union[bool, Iterable[str]] = False,
                  balance: bool = False,
@@ -25,6 +26,7 @@ class ZSEE(Model):
 
         self._text_field_embedder = text_field_embedder
         self._encoder = encoder
+        self._embeddings_dropout = Dropout(embeddings_dropout)
         self._dropout = Dropout(dropout)
         self._verbose = verbose
         self._balance = balance
@@ -85,6 +87,7 @@ class ZSEE(Model):
 
         # Shape: (batch_size, num_tokens, embedding_dim)
         text_embeddings = self._text_field_embedder(text)
+        text_embeddings = self._embeddings_dropout(text_embeddings)
 
         # Shape: (batch_size, num_tokens, encoder_dim)
         hidden = self._encoder(text_embeddings, mask)
