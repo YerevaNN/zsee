@@ -6,21 +6,25 @@ from allennlp.training.metrics import Metric
 from typing import Any, Dict, List, Tuple, Union, Set
 
 ConfusionMatrix = Counter
+
 LabellingsDict = Dict[Any, str]
 LabellingsList = List[Tuple[Any, str]]
 Labellings = Union[LabellingsDict, LabellingsList]
+
 
 
 @Metric.register('precision_recall_fscore')
 class PrecisionRecallFScore(Metric):
     def __init__(self,
                  labels: List[str] = None,
-                 beta: float = 1) -> None:
+                 beta: float = 1,
+                 prefix: str = '') -> None:
         self._labels = labels
         self._beta = beta
+        self._prefix = prefix
         # Metrics are reported for each label, so we compute statistics
         # for each label separately.
-        self._labelwise_confusion_matrices: List[Dict[str, ConfusionMatrix]] = []
+        self._labelwise_confusion_matrices: Dict[str, ConfusionMatrix] = defaultdict(ConfusionMatrix)
 
     def __call__(self,
                  batch_predictions: List[Labellings],
@@ -34,7 +38,12 @@ class PrecisionRecallFScore(Metric):
             if isinstance(gold_labels, dict):
                 gold_labels = list(gold_labels.items())
             # Now compare each sample separately.
-            self._compare_sample(predictions, gold_labels)
+            labelwise_confusion_matrices = self._compare_sample(predictions, gold_labels)
+            # Accumulate into the state of the each label
+            for label in self._labels:
+                label_confusion_matrix = labelwise_confusion_matrices[label]
+                self._labelwise_confusion_matrices[label] += label_confusion_matrix
+
 
     def _compare_sample(self,
                         predictions: LabellingsList,
@@ -44,25 +53,28 @@ class PrecisionRecallFScore(Metric):
 
         # Now, collect predicted datapoints for each label.
         # `Counter`s are used as multisets.
-        predicted_datapoints: Dict[str, Counter[Any]] = defaultdict(Counter)
+        pred_datapoints: Dict[str, Counter[Any]] = defaultdict(Counter)
         gold_datapoints: Dict[str, Counter[Any]] = defaultdict(Counter)
         for datapoint, label in predictions:
-            predicted_datapoints[label][datapoint] += 1
+            pred_datapoints[label][datapoint] += 1
         for datapoint, label in gold_labels:
             gold_datapoints[label][datapoint] += 1
 
-        # Initialize confusion matrices for each label
-        labelwise_confusion_matrices: Dict[str, ConfusionMatrix] = {
-            label: self._confusion_matrix(predicted_datapoints[label],
+        return {
+            label: self._confusion_matrix(pred_datapoints[label],
                                           gold_datapoints[label])
             for label in self._labels
         }
 
-        self._labelwise_confusion_matrices.append(labelwise_confusion_matrices)
-
     def _confusion_matrix(self,
-                          predictions: Counter,
-                          gold_labelled: Counter) -> ConfusionMatrix:
+                          predictions: Counter = None,
+                          gold_labelled: Counter = None) -> ConfusionMatrix:
+        if predictions is None:
+            predictions = Counter()
+
+        if gold_labelled is None:
+            gold_labelled = Counter()
+
         # Now compare sets / multisets
         true_positive_datapoints = predictions & gold_labelled
         false_positive_datapoints = predictions - gold_labelled
@@ -119,23 +131,24 @@ class PrecisionRecallFScore(Metric):
         Compute and return the metric. Optionally also call :func:`self.reset`.
         """
 
-        # TODO Accumulate real-time
-        labelwise: Dict[str, ConfusionMatrix] = defaultdict(ConfusionMatrix)
-        averaged: ConfusionMatrix = ConfusionMatrix()
+        # If we had no comparisons, report nothing.
+        if not self._labelwise_confusion_matrices:
+            # No need to handle `reset` flag as it is already in zero-state.
+            return dict()
 
-        for labelwise_confusion_matrices in self._labelwise_confusion_matrices:
-            for label, confusion_matrix in labelwise_confusion_matrices.items():
-                labelwise[label] += confusion_matrix
-                averaged += confusion_matrix
+        averaged: ConfusionMatrix = ConfusionMatrix()
+        for confusion_matrix in self._labelwise_confusion_matrices.values():
+            averaged += confusion_matrix
 
         scores: Dict[str, Any] = dict()
-
         for label in self._labels:
-            label_scores = self._compute_scores(labelwise[label],
-                                                f'labelwise/{label}')
+            prefix = f'{self._prefix}labelwise/{label}'
+            label_scores = self._compute_scores(self._labelwise_confusion_matrices[label],
+                                                prefix)
             scores.update(label_scores)
 
-        averaged_scores = self._compute_scores(averaged)
+        prefix = f'{self._prefix}averaged'
+        averaged_scores = self._compute_scores(averaged, prefix)
         scores.update(averaged_scores)
 
         if reset:
