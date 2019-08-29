@@ -66,6 +66,9 @@ class ACE2005TriggerReader(DatasetReader):
         # Event mention span tagging has to be done on token-level.
         tokens = self._tokenizer.tokenize(sentence)
 
+        if event_annotations is None:
+            return self._build_instance(tokens)
+
         # Enumerate all the tokens and prepare char-to-token-id mappings
         # Store starts and ends separately to make multi-token mention mappings easier
         token_starts: Dict[int, int] = dict()
@@ -76,13 +79,10 @@ class ACE2005TriggerReader(DatasetReader):
             token_starts[start] = idx
             token_ends[end] = idx
 
-        if event_annotations is None:
-            return self._build_instance(tokens)
-
         # Prepare both char-based and token-based span offsets.
         event_labels = ['O' for token in tokens]
-        raw_sentence_events: Dict[Tuple[int, int], str] = dict()
-        sentence_events: Dict[Tuple[int, int], str] = dict()
+        trigger_char_seqs: Dict[Tuple[int, int], str] = dict()
+        trigger_token_seqs: Dict[Tuple[int, int], str] = dict()
         for (start, end), label in event_annotations.items():
             # Filter only those non-empty charseq mentions
             # within the sentence boundaries
@@ -94,7 +94,7 @@ class ACE2005TriggerReader(DatasetReader):
             # Mention char-based end offset, relative to sentence, exclusive
             relative_end = end - sentence_start
 
-            raw_sentence_events[relative_start, relative_end] = label
+            trigger_char_seqs[relative_start, relative_end] = label
 
             # Mention token-based start offset, relative to sentence, inclusive
             start_idx = token_starts.get(relative_start)
@@ -103,7 +103,7 @@ class ACE2005TriggerReader(DatasetReader):
 
             # In case of if exact mapping between char-based mention and
             # tokens isn't possible, just omit the event.
-            # For evaluation phase, only `raw_sentence_events` are used
+            # For evaluation phase, only `trigger_char_seqs` are used
             # for fair comparison without any ground truth information loss.
             if start_idx is None or end_idx is None:
                 logger.warning(f'Mention-Token span mismatch:'
@@ -111,15 +111,15 @@ class ACE2005TriggerReader(DatasetReader):
                                f'...{tokens[start_idx or end_idx or 0]}...')
                 continue
 
-            # Now, populate `labels` and `sentence_events` with retained events.
+            # Now, populate `labels` and `trigger_token_seqs` with retained events.
             # These retained events should be only used for training.
-            sentence_events[start_idx, end_idx] = label
+            trigger_token_seqs[start_idx, end_idx] = label
             for idx in range(start_idx, end_idx + 1):
                 event_labels[idx] = label
 
         return self._build_instance(tokens, event_labels,
-                                    raw_sentence_events=raw_sentence_events,
-                                    sentence_events=sentence_events)
+                                    trigger_char_seqs=trigger_char_seqs,
+                                    trigger_token_seqs=trigger_token_seqs)
 
     def _process_doc(self,
                      text: str,

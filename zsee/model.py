@@ -38,8 +38,16 @@ class ZSEE(Model):
 
         self._accuracy = CategoricalAccuracy()
         labels = vocab.get_token_to_index_vocabulary(self._event_label_namespace)
-        self._precision_recall_fscore = PrecisionRecallFScore(labels=list(labels))
-        # self._precision_recall_fscore_tokens = PrecisionRecallFScore(labels=list(labels))
+
+        # We have two (slight different) metric sets: char-based and token-based
+        # Char-based metrics also capture error propagated by NER.
+        # Token-based metrics are computed as well to:
+        #  1. Measure difference as error we have because of NER,
+        #  2. Compare with most of the previous work evaluated token-level,
+        #  3. As fallback if our tokenization option does not provide token-char mappings.
+        self._prf_char_seqs = PrecisionRecallFScore(labels=list(labels))
+        self._prf_token_seqs = PrecisionRecallFScore(labels=list(labels),
+                                                     prefix='token_level/')
 
     def _balancing_weights(self,
                            labels: torch.Tensor,
@@ -114,36 +122,55 @@ class ZSEE(Model):
         #     return output_dict
 
         output_dict = self.decode(output_dict)
-        # Compute Metrics on char-based decoded spans
-        batch_predicted_events = output_dict['predicted_events']
-        batch_raw_sentence_events = metadata['raw_sentence_events']
-        self._precision_recall_fscore(batch_predicted_events,
-                                      batch_raw_sentence_events)
-        # # Token-level computation of predictions
-        # batch_predicted_events_tokens = output_dict['predicted_events_tokens']
-        # batch_sentence_events = metadata['sentence_events']
-        # self._precision_recall_fscore_tokens(batch_predicted_events_tokens,
-        #                                      batch_sentence_events)
+
+        # Token-level computation of predictions
+        self._prf_token_seqs(output_dict['pred_trigger_token_seqs'],
+                             metadata['trigger_token_seqs'])
+
+        # If mapping was provided and model was able to decode char-based
+        # trigger span boundaries, then compute metrics also w.r.t. them
+        if 'trigger_char_seqs' in metadata:
+            self._prf_char_seqs(output_dict['pred_trigger_char_seqs'],
+                                metadata['trigger_char_seqs'])
 
         return output_dict
 
-    def decode(self, output_dict: Dict[str, Any]) -> Dict[str, Any]:
-        if 'predicted_events' in output_dict:
-            return output_dict
+    class Char2TokenMappingMissing(Exception):
+        pass
 
+    def decode(self, output_dict: Dict[str, Any]) -> Dict[str, Any]:
         batch_tokens: List[List[Token]] = output_dict['tokens']
         # Shape: (batch_size, num_tokens, num_event_types)
         tag_logits: torch.Tensor = output_dict['tag_logits'].detach().cpu().numpy()
         # Shape: (batch_size, num_tokens)
-        batch_predicted_tags = tag_logits.argmax(-1)
+        batch_pred_tags = tag_logits.argmax(-1)
         # Shape: (batch_size, num_tokens)
         batch_mask: torch.Tensor = output_dict['mask']
 
+        # First, decode token-based trigger spans.
+        batch_pred_trigger_token_seqs = self._decode_trigger_token_seqs(batch_pred_tags,
+                                                                        batch_mask)
+        output_dict['pred_trigger_token_seqs'] = batch_pred_trigger_token_seqs
+
+        # Try to decode char-based boundaries of the trigger span.
+        # If no mapping is provided, skip the step.
+        try:
+            batch_pred_trigger_char_seqs = self._decode_trigger_char_seqs(batch_tokens,
+                                                                          batch_pred_trigger_token_seqs)
+            output_dict['pred_trigger_char_seqs'] = batch_pred_trigger_char_seqs
+        except ZSEE.Char2TokenMappingMissing:
+            output_dict['pred_trigger_char_seqs'] = None
+
+        return output_dict
+
+    def _decode_trigger_token_seqs(self,
+                                   batch_pred_tags: torch.Tensor,
+                                   batch_mask: torch.Tensor
+                                   ) -> List[Dict[Tuple[int, int], str]]:
+
         batch_predicted_events_tokens: List[Dict[Tuple[int, int], str]] = []
-        batch_predicted_events: List[Dict[Tuple[int, int], str]] = []
-        for predicted_tags, mask, tokens in zip(batch_predicted_tags,
-                                                batch_mask,
-                                                batch_tokens):
+        for predicted_tags, mask in zip(batch_pred_tags,
+                                        batch_mask):
             # First, we decode token-level spans of the mentioned events
             event_token_spans: Dict[Tuple[int, int], str] = dict()
             # Token-based offset of the start, inclusive
@@ -175,12 +202,26 @@ class ZSEE(Model):
                     continue
                 event_token_spans[first_idx, last_idx] = label
 
+            batch_predicted_events_tokens.append(event_token_spans)
+
+        return batch_predicted_events_tokens
+
+    def _decode_trigger_char_seqs(self,
+                                  batch_tokens: List[List[Token]],
+                                  batch_pred_trigger_token_seqs: List[Dict[Tuple[int, int], str]]
+                                  ) -> List[Dict[Tuple[int, int], str]]:
+
+        batch_predicted_events: List[Dict[Tuple[int, int], str]] = []
+        for tokens, event_token_spans in zip(batch_tokens, batch_pred_trigger_token_seqs):
             # Now, we are ready to map token spans back to raw text to get
             # char-based mention boundaries
             predicted_events: Dict[Tuple[int, int], str] = dict()
             for (first_idx, last_idx), label in event_token_spans.items():
                 first = tokens[first_idx]
                 last = tokens[last_idx]
+
+                if getattr(first, 'idx', None) is None:
+                    raise ZSEE.Char2TokenMappingMissing('No char2token mapping is provided.')
 
                 # Char-based start offset, inclusive
                 start = first.idx
@@ -189,13 +230,9 @@ class ZSEE(Model):
                 # Report the predicted mention
                 predicted_events[start, end] = label
 
-            batch_predicted_events_tokens.append(event_token_spans)
             batch_predicted_events.append(predicted_events)
 
-        output_dict['predicted_events_tokens'] = batch_predicted_events_tokens
-        output_dict['predicted_events'] = batch_predicted_events
-
-        return output_dict
+        return batch_predicted_events
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         if not reset and not self._verbose:
@@ -203,13 +240,13 @@ class ZSEE(Model):
 
         # TODO Show only keys of `self._verbose`
 
-        precision_recall_fscore = self._precision_recall_fscore.get_metric(reset)
+        prf_char_seqs = self._prf_char_seqs.get_metric(reset)
+        prf_token_seqs = self._prf_token_seqs.get_metric(reset)
+
         scores = {
             'accuracy': self._accuracy.get_metric(reset),
-            **precision_recall_fscore
+            **prf_char_seqs,
+            **prf_token_seqs
         }
-
-        # for key, value in self._precision_recall_fscore_tokens.get_metric(reset).items():
-        #     scores[f'token-level/{key}'] = value
 
         return scores
