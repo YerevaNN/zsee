@@ -134,7 +134,9 @@ local embedding_dim = use_glove_embedding   *   glove_embedding_dim
                 if use_bert_embedding == 0 then {} else {
                 "bert": {
                     "type": "bert-pretrained",
-                    "pretrained_model": "bert-base-multilingual-cased"
+                    "pretrained_model": "bert-base-multilingual-cased",
+                    "requires_grad": true,
+                    "top_layer_only": false
                 }
             })
         },
@@ -170,9 +172,9 @@ local embedding_dim = use_glove_embedding   *   glove_embedding_dim
         //    "biggest_batch_first": true
     },
     "trainer": {
-        "num_epochs": 100,
+        "num_epochs": 50,
         "grad_norm": grad_norm,
-        "patience" : 30,
+        "patience" : 20,
         "cuda_device" : 0,
         "validation_metric": "+averaged_f1",
         //    "learning_rate_scheduler": {

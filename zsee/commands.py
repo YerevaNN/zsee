@@ -100,6 +100,11 @@ class HyperParameterSearch(Subcommand):
                                type=str,
                                help='directory in which to save the models and their logs')
 
+        subparser.add_argument('-n', '--num-runs',
+                               default=1,
+                               type=int,
+                               help='number of runs per config')
+
         subparser.add_argument('-o', '--overrides',
                                type=str,
                                default="",
@@ -109,6 +114,11 @@ class HyperParameterSearch(Subcommand):
                                action='store_true',
                                default=False,
                                help='outputs tqdm status on separate lines and slows tqdm refresh rate')
+
+        subparser.add_argument('--random',
+                               action='store_true',
+                               default=False,
+                               help='random order of runs')
 
         subparser.add_argument('--cache-directory',
                                type=str,
@@ -125,24 +135,39 @@ class HyperParameterSearch(Subcommand):
 
         return subparser
 
-def generate_configs(options: Dict[str, Iterable[Any]]) -> Iterator[Dict[str, Any]]:
+def generate_configs(options: Dict[str, List[Any]]) -> Iterator[Dict[str, Any]]:
     keys = options.keys()
-    values = options.values()
-    for chosen_values in itertools.product(*values):
-        yield dict(zip(keys, chosen_values))
+    base = {key: options[key][0] for key in keys}
+    possible_changes = {key: options[key][1:] for key in keys}
+
+    for num_changes in range(len(options)):
+        for keys_to_change in itertools.combinations(keys, num_changes):
+            values_to_pick_changes_from = [possible_changes[key]
+                                           for key in keys_to_change]
+            for picked_values in itertools.product(*values_to_pick_changes_from):
+                config = base.copy()
+                config_name = '_'
+                for key_to_change, picked_value in zip(keys_to_change, picked_values):
+                    config[key_to_change] = picked_value
+                    config_name += f'{key_to_change}={picked_value}_'
+
+                yield config_name, config
+
 
 
 def train_model_from_args(args: argparse.Namespace):
     """
     Just converts from an ``argparse.Namespace`` object to string paths.
     """
-    train_model_from_file(args.param_path,
-                          args.options_path,
-                          args.serialization_dir,
-                          args.overrides,
-                          args.file_friendly_logging,
-                          args.cache_directory,
-                          args.cache_prefix)
+    train_model_from_file(parameter_filename=args.param_path,
+                          options_filename=args.options_path,
+                          serialization_dir=args.serialization_dir,
+                          overrides=args.overrides,
+                          file_friendly_logging=args.file_friendly_logging,
+                          cache_directory=args.cache_directory,
+                          cache_prefix=args.cache_prefix,
+                          random=args.random,
+                          num_runs=args.num_runs)
 
 
 def train_model_from_file(parameter_filename: str,
@@ -152,7 +177,8 @@ def train_model_from_file(parameter_filename: str,
                           file_friendly_logging: bool = False,
                           cache_directory: str = None,
                           cache_prefix: str = None,
-                          shuffle: bool = False) -> Model:
+                          random: bool = False,
+                          num_runs: int = 1) -> Model:
     """
     A wrapper around :func:`train_model` which loads the params from a file.
 
@@ -182,22 +208,21 @@ def train_model_from_file(parameter_filename: str,
         For caching data pre-processing.  See :func:`allennlp.training.util.datasets_from_params`.
     shuffle : ``bool``, optional (default=True)
         Whether to search in hyperparameter grid in random order or preserve order of options file.
+    num_runs : ``int``, optional (default=1)
+        Number of runs per configuration.
     """
     # Load the experiment config from a file and pass it to ``train_model``.
     with open(options_filename, 'r', encoding='utf-8') as f:
         options = json.load(f)
 
-    configs = generate_configs(options)
+    if random:
+        raise NotImplementedError
 
-    if shuffle:
-        configs = list(configs)
-        random.shuffle(configs)
-
-    for idx, config in enumerate(configs):
+    for config_name, config in generate_configs(options):
         params = OptionsParams.from_file(parameter_filename, overrides, config)
-
-        train_model(params,
-                    serialization_dir=f'{serialization_dir}/{idx}',
-                    file_friendly_logging=file_friendly_logging,
-                    cache_directory=cache_directory,
-                    cache_prefix=cache_prefix)
+        for run_idx in range(num_runs):
+            train_model(params,
+                        serialization_dir=f'{serialization_dir}/{config_name}/{run_idx}',
+                        file_friendly_logging=file_friendly_logging,
+                        cache_directory=cache_directory,
+                        cache_prefix=cache_prefix)
