@@ -1,9 +1,8 @@
-from collections import namedtuple, defaultdict, Counter
+from collections import defaultdict, Counter
 
-from sklearn.metrics import precision_recall_fscore_support, multilabel_confusion_matrix
 from allennlp.training.metrics import Metric
 
-from typing import Any, Dict, List, Tuple, Union, Set
+from typing import Any, Dict, List, Tuple, Union
 
 ConfusionMatrix = Counter
 
