@@ -5,6 +5,7 @@ import argparse
 import os
 import random
 
+from allennlp.common.checks import ConfigurationError
 from allennlp.common.file_utils import cached_path
 from allennlp.common.params import _environment_variables, evaluate_file, parse_overrides, with_fallback
 from allennlp.models import Model
@@ -131,6 +132,12 @@ class HyperParameterSearch(Subcommand):
                                help='Prefix to use for data caching, giving current parameter '
                                'settings a name in the cache, instead of computing a hash')
 
+        cuda_device = subparser.add_mutually_exclusive_group(required=False)
+        cuda_device.add_argument('--cuda-device',
+                                 type=int,
+                                 default=None,
+                                 help='id of GPU to use (if not the default one from the config)')
+
         subparser.set_defaults(func=train_model_from_args)
 
         return subparser
@@ -167,7 +174,8 @@ def train_model_from_args(args: argparse.Namespace):
                           cache_directory=args.cache_directory,
                           cache_prefix=args.cache_prefix,
                           random=args.random,
-                          num_runs=args.num_runs)
+                          num_runs=args.num_runs,
+                          cuda_device=args.cuda_device)
 
 
 def train_model_from_file(parameter_filename: str,
@@ -178,7 +186,8 @@ def train_model_from_file(parameter_filename: str,
                           cache_directory: str = None,
                           cache_prefix: str = None,
                           random: bool = False,
-                          num_runs: int = 1) -> Model:
+                          num_runs: int = 1,
+                          cuda_device: int = None) -> Model:
     """
     A wrapper around :func:`train_model` which loads the params from a file.
 
@@ -210,6 +219,8 @@ def train_model_from_file(parameter_filename: str,
         Whether to search in hyperparameter grid in random order or preserve order of options file.
     num_runs : ``int``, optional (default=1)
         Number of runs per configuration.
+    cuda_device: ``int``, optional (default=None)
+        Cuda device id to override original config with.
     """
     # Load the experiment config from a file and pass it to ``train_model``.
     with open(options_filename, 'r', encoding='utf-8') as f:
@@ -220,9 +231,24 @@ def train_model_from_file(parameter_filename: str,
 
     for config_name, config in generate_configs(options):
         params = OptionsParams.from_file(parameter_filename, overrides, config)
+
+        if cuda_device is not None:
+            params.params['trainer']['cuda_device'] = cuda_device
+
         for run_idx in range(num_runs):
+            run_dir = f'{serialization_dir}/{config_name}/{run_idx}'
+            try:
+                # Directory level lock for multi-process training:
+                #   If could take the lock, then start training
+                #   If not, then someone (at least once) took the lock
+                # There's no lock release.
+                os.makedirs(run_dir)
+            except FileExistsError:
+                logger.warning('The run is already launched. Skipping...')
+                continue
+
             train_model(params,
-                        serialization_dir=f'{serialization_dir}/{config_name}/{run_idx}',
+                        serialization_dir=run_dir,
                         file_friendly_logging=file_friendly_logging,
                         cache_directory=cache_directory,
                         cache_prefix=cache_prefix)
