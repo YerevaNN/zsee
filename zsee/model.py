@@ -166,13 +166,13 @@ class ZSEE(Model):
     def _decode_trigger_token_seqs(self,
                                    batch_pred_tags: torch.Tensor,
                                    batch_mask: torch.Tensor
-                                   ) -> List[Dict[Tuple[int, int], str]]:
+                                   ) -> List[List[Tuple[Tuple[int, int], str]]]:
 
-        batch_predicted_events_tokens: List[Dict[Tuple[int, int], str]] = []
+        batch_predicted_triggers: List[List[Tuple[Tuple[int, int], str]]] = []
         for predicted_tags, mask in zip(batch_pred_tags,
                                         batch_mask):
             # First, we decode token-level spans of the mentioned events
-            event_token_spans: Dict[Tuple[int, int], str] = dict()
+            predicted_triggers: Dict[Tuple[int, int], str] = dict()
             # Token-based offset of the start, inclusive
             first_idx = 0
             # Token-based offset of the end, inclusive
@@ -190,8 +190,8 @@ class ZSEE(Model):
                     first_idx = idx
 
                 # Discard the mention
-                if (first_idx, last_idx) in event_token_spans:
-                    del event_token_spans[first_idx, last_idx]
+                if (first_idx, last_idx) in predicted_triggers:
+                    del predicted_triggers[first_idx, last_idx]
 
                 # Define extended mention span
                 last_idx = idx
@@ -200,23 +200,28 @@ class ZSEE(Model):
                 # Register if has label
                 if label is 'O':
                     continue
-                event_token_spans[first_idx, last_idx] = label
+                predicted_triggers[first_idx, last_idx] = label
 
-            batch_predicted_events_tokens.append(event_token_spans)
+            # Convert dicts into lists
+            batch_predicted_triggers.append([
+                (span, label)
+                for span, label
+                in predicted_triggers.items()
+            ])
 
-        return batch_predicted_events_tokens
+        return batch_predicted_triggers
 
     def _decode_trigger_char_seqs(self,
                                   batch_tokens: List[List[Token]],
-                                  batch_pred_trigger_token_seqs: List[Dict[Tuple[int, int], str]]
-                                  ) -> List[Dict[Tuple[int, int], str]]:
+                                  batch_pred_trigger_token_seqs: List[List[Tuple[Tuple[int, int], str]]]
+                                  ) -> List[List[Tuple[Tuple[int, int], str]]]:
 
-        batch_predicted_events: List[Dict[Tuple[int, int], str]] = []
+        batch_predicted_triggers: List[List[Tuple[Tuple[int, int], str]]] = []
         for tokens, event_token_spans in zip(batch_tokens, batch_pred_trigger_token_seqs):
             # Now, we are ready to map token spans back to raw text to get
             # char-based mention boundaries
-            predicted_events: Dict[Tuple[int, int], str] = dict()
-            for (first_idx, last_idx), label in event_token_spans.items():
+            predicted_triggers: List[Tuple[Tuple[int, int], str]] = []
+            for (first_idx, last_idx), label in event_token_spans:
                 first = tokens[first_idx]
                 last = tokens[last_idx]
 
@@ -227,12 +232,13 @@ class ZSEE(Model):
                 start = first.idx
                 # Char-based end offset, exclusive
                 end = last.idx + len(last.text)
-                # Report the predicted mention
-                predicted_events[start, end] = label
+                # Report the predicted trigger
+                trigger = (start, end), label
+                predicted_triggers.append(trigger)
 
-            batch_predicted_events.append(predicted_events)
+            batch_predicted_triggers.append(predicted_triggers)
 
-        return batch_predicted_events
+        return batch_predicted_triggers
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         if not reset and not self._verbose:

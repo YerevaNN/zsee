@@ -1,7 +1,7 @@
 import logging
 import os
 import re
-from typing import Dict, Iterator, List, Tuple, NewType
+from typing import Dict, Iterator, List, Tuple, NewType, Any
 
 from allennlp.data import DatasetReader, Instance, TokenIndexer, Tokenizer, Token, Field
 from allennlp.data.fields import TextField, SequenceLabelField, MetadataField
@@ -53,12 +53,18 @@ class ACE2005TriggerReader(DatasetReader):
         # soup = BeautifulSoup(markup, 'xml')
         pattern = re.compile(r'<.*?>',
                              re.MULTILINE | re.DOTALL)
-        return pattern.sub('', markup)
+        text = pattern.sub('', markup)
+        text = text.replace('\n', ' ')
+        return text
 
     def _process_sentence(self,
                           sentence: str,
                           sentence_offset: int = 0,
                           event_annotations: Dict[Tuple[int, int], str] = None) -> Instance:
+        metadata: Dict[str, Any] = {
+            "raw_sentence": sentence
+        }
+
         # Sentence char-based boundaries
         sentence_start = sentence_offset
         sentence_end = sentence_start + len(sentence)
@@ -67,7 +73,7 @@ class ACE2005TriggerReader(DatasetReader):
         tokens = self._tokenizer.tokenize(sentence)
 
         if event_annotations is None:
-            return self._build_instance(tokens)
+            return self._build_instance(tokens, **metadata)
 
         # Enumerate all the tokens and prepare char-to-token-id mappings
         # Store starts and ends separately to make multi-token mention mappings easier
@@ -119,7 +125,8 @@ class ACE2005TriggerReader(DatasetReader):
 
         return self._build_instance(tokens, event_labels,
                                     trigger_char_seqs=trigger_char_seqs,
-                                    trigger_token_seqs=trigger_token_seqs)
+                                    trigger_token_seqs=trigger_token_seqs,
+                                    **metadata)
 
     def _process_doc(self,
                      text: str,
@@ -234,6 +241,7 @@ class ACE2005TriggerReader(DatasetReader):
             # except ValueError:
             #     logger.warning(f'Parse error. Ignoring a document {doc_name}')
 
-    def text_to_instance(self, *inputs) -> Instance:
-        # TODO Implement
-        pass
+    def text_to_instance(self, tokens: List[str]) -> Instance:
+        # Very temporary
+        sentence = ''.join([token.text_with_ws for token in tokens])
+        return self._process_sentence(sentence)
