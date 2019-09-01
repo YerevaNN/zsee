@@ -135,7 +135,7 @@ local embedding_dim = use_glove_embedding   *   glove_embedding_dim
                 "bert": {
                     "type": "bert-pretrained",
                     "pretrained_model": "bert-base-multilingual-cased",
-                    "requires_grad": true,
+                    "requires_grad": false,
                     "top_layer_only": false
                 }
             })
