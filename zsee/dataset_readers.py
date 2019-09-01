@@ -183,7 +183,7 @@ class ACE2005TriggerReader(DatasetReader):
                 event_annotations[mention] = label
 
                 if text is not None:
-                    expected = charseq.text
+                    expected = charseq.text.replace('\n', ' ')
                     text_found = text[start:end]
                     if text_found != expected:
                         logger.warning(f'Mention text mismatch: '
