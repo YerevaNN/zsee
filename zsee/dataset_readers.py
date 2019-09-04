@@ -221,6 +221,9 @@ class ACE2005TriggerReader(DatasetReader):
         return Instance(fields)
 
     def _read(self, file_path: str) -> Iterator[Instance]:
+        num_docs_read = 0
+        num_instances_read = 0
+
         # We consider lines of file at `file_path` paths of the documents
         # to read. Paths are considered relative to the catalog.
         file_path = Path(file_path)
@@ -237,9 +240,15 @@ class ACE2005TriggerReader(DatasetReader):
 
             # In case of if sgm / xml parsing failed, just skip the document.
             # try:
-            yield from self._read_doc(sgm_path, apf_xml_path)
+            for instance in self._read_doc(sgm_path, apf_xml_path):
+                yield instance
+                num_instances_read += 1
             # except ValueError:
             #     logger.warning(f'Parse error. Ignoring a document {doc_name}')
+            num_docs_read += 1
+
+        logger.info(f'Read {num_docs_read} docs')
+        logger.info(f'Read {num_instances_read} instances')
 
     def text_to_instance(self, tokens: List[str]) -> Instance:
         # Very temporary
