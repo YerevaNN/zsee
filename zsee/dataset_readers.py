@@ -14,14 +14,6 @@ from pathlib import Path
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
-@SentenceSplitter.register('spacy_raw')
-class SpacyRawSentenceSplitter(SpacySentenceSplitter):
-
-    def split_sentences(self, text: str) -> List[str]:
-        return [sent.string for sent in self.spacy(text).sents]
-
-    def batch_split_sentences(self, texts: List[str]) -> List[List[str]]:
-        return [[sentence.string for sentence in doc.sents] for doc in self.spacy.pipe(texts)]
 
 
 @DatasetReader.register('ace2005_trigger')
