@@ -21,7 +21,7 @@ class ZSEE(Model):
                  dropout: float = 0,
                  verbose: Union[bool, Iterable[str]] = False,
                  balance: bool = False,
-                 event_label_namespace: str = 'event_labels') -> None:
+                 trigger_label_namespace: str = 'event_labels') -> None:
         super().__init__(vocab)
 
         self._text_field_embedder = text_field_embedder
@@ -30,14 +30,14 @@ class ZSEE(Model):
         self._dropout = Dropout(dropout)
         self._verbose = verbose
         self._balance = balance
-        self._event_label_namespace = event_label_namespace
+        self._trigger_label_namespace = trigger_label_namespace
 
-        num_event_classes = vocab.get_vocab_size(event_label_namespace)
+        num_trigger_classes = vocab.get_vocab_size(trigger_label_namespace)
         self._projection = Linear(in_features=encoder.get_output_dim(),
-                                  out_features=num_event_classes)
+                                  out_features=num_trigger_classes)
 
         self._accuracy = CategoricalAccuracy()
-        labels = vocab.get_token_to_index_vocabulary(self._event_label_namespace)
+        labels = vocab.get_token_to_index_vocabulary(self._trigger_label_namespace)
 
         # We have two (slight different) metric sets: char-based and token-based
         # Char-based metrics also capture error propagated by NER.
@@ -81,7 +81,7 @@ class ZSEE(Model):
 
     def forward(self,
                 text: Dict[str, Any],
-                event_labels: torch.LongTensor = None,
+                trigger_labels: torch.LongTensor = None,
                 **metadata) -> Dict[str, Any]:
         # Output dict to collect forward results
         output_dict: Dict[str, Any] = dict()
@@ -101,22 +101,22 @@ class ZSEE(Model):
         hidden = self._encoder(text_embeddings, mask)
         hidden = self._dropout(hidden)
 
-        # Shape: (batch_size, num_tokens, num_event_types)
+        # Shape: (batch_size, num_tokens, num_trigger_classes)
         tag_logits = self._projection(hidden)
         output_dict['tag_logits'] = tag_logits
 
-        if event_labels is None:
+        if trigger_labels is None:
             return output_dict
 
-        balancing_weights = self._balancing_weights(event_labels,
+        balancing_weights = self._balancing_weights(trigger_labels,
                                                     mask=mask)
-        loss = sequence_cross_entropy_with_logits(tag_logits, event_labels,
+        loss = sequence_cross_entropy_with_logits(tag_logits, trigger_labels,
                                                   balancing_weights)
         output_dict['loss'] = loss
 
         # Computing metrics
 
-        self._accuracy(tag_logits, event_labels, mask)
+        self._accuracy(tag_logits, trigger_labels, mask)
         # Decode
         # if self.training:
         #     return output_dict
@@ -140,7 +140,7 @@ class ZSEE(Model):
 
     def decode(self, output_dict: Dict[str, Any]) -> Dict[str, Any]:
         batch_tokens: List[List[Token]] = output_dict['tokens']
-        # Shape: (batch_size, num_tokens, num_event_types)
+        # Shape: (batch_size, num_tokens, num_trigger_classes)
         tag_logits: torch.Tensor = output_dict['tag_logits'].detach().cpu().numpy()
         # Shape: (batch_size, num_tokens)
         batch_pred_tags = tag_logits.argmax(-1)
@@ -184,7 +184,7 @@ class ZSEE(Model):
                 if not to_process:
                     continue
                 label = self.vocab.get_token_from_index(tag_idx,
-                                                        self._event_label_namespace)
+                                                        self._trigger_label_namespace)
                 # If new label is occurred, then set the new start
                 if label != previous_label:
                     first_idx = idx
@@ -217,11 +217,11 @@ class ZSEE(Model):
                                   ) -> List[List[Tuple[Tuple[int, int], str]]]:
 
         batch_predicted_triggers: List[List[Tuple[Tuple[int, int], str]]] = []
-        for tokens, event_token_spans in zip(batch_tokens, batch_pred_trigger_token_seqs):
+        for tokens, trigger_token_spans in zip(batch_tokens, batch_pred_trigger_token_seqs):
             # Now, we are ready to map token spans back to raw text to get
             # char-based mention boundaries
             predicted_triggers: List[Tuple[Tuple[int, int], str]] = []
-            for (first_idx, last_idx), label in event_token_spans:
+            for (first_idx, last_idx), label in trigger_token_spans:
                 first = tokens[first_idx]
                 last = tokens[last_idx]
 

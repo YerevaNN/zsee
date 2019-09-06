@@ -1,34 +1,38 @@
 import logging
 import os
 import re
-from typing import Dict, Iterator, List, Tuple, NewType, Any
+from typing import Dict, Iterator, List, Tuple, Any
 
 from allennlp.data import DatasetReader, Instance, TokenIndexer, Tokenizer, Token, Field
 from allennlp.data.fields import TextField, SequenceLabelField, MetadataField
 from allennlp.data.tokenizers import SentenceSplitter
-from allennlp.data.tokenizers.sentence_splitter import SpacySentenceSplitter
 
 from bs4 import BeautifulSoup
 from pathlib import Path
 
+from .trigger_reader import TriggerReader
+
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
-
-
 @DatasetReader.register('ace2005_trigger')
-class ACE2005TriggerReader(DatasetReader):
+@DatasetReader.register('apf_trigger')
+class APFTriggerReader(TriggerReader):
+    """
+    Trigger reader which reads APF (Ace Program Format) files corresponding
+    to the paths given in the source file.
+    """
     def __init__(self,
                  token_indexers: Dict[str, TokenIndexer],
                  tokenizer: Tokenizer,
                  sentence_splitter: SentenceSplitter,
-                 event_label_namespace: str = 'event_labels',
+                 trigger_label_namespace: str = 'event_labels',
                  lazy: bool = False) -> None:
-        super().__init__(lazy)
-        self._token_indexers = token_indexers
+        super().__init__(token_indexers=token_indexers,
+                         trigger_label_namespace=trigger_label_namespace,
+                         lazy=lazy)
         self._tokenizer = tokenizer
         self._sentence_splitter = sentence_splitter
-        self._event_label_namespace = event_label_namespace
 
     def _read_doc_names(self, file_path: os.PathLike) -> Iterator[str]:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -52,7 +56,7 @@ class ACE2005TriggerReader(DatasetReader):
     def _process_sentence(self,
                           sentence: str,
                           sentence_offset: int = 0,
-                          event_annotations: Dict[Tuple[int, int], str] = None) -> Instance:
+                          trigger_annotations: Dict[Tuple[int, int], str] = None) -> Instance:
         metadata: Dict[str, Any] = {
             "raw_sentence": sentence
         }
@@ -64,7 +68,7 @@ class ACE2005TriggerReader(DatasetReader):
         # Event mention span tagging has to be done on token-level.
         tokens = self._tokenizer.tokenize(sentence)
 
-        if event_annotations is None:
+        if trigger_annotations is None:
             return self._build_instance(tokens, **metadata)
 
         # Enumerate all the tokens and prepare char-to-token-id mappings
@@ -78,10 +82,10 @@ class ACE2005TriggerReader(DatasetReader):
             token_ends[end] = idx
 
         # Prepare both char-based and token-based span offsets.
-        event_labels = ['O' for token in tokens]
+        trigger_labels = ['O' for token in tokens]
         trigger_char_seqs: Dict[Tuple[int, int], str] = dict()
         trigger_token_seqs: Dict[Tuple[int, int], str] = dict()
-        for (start, end), label in event_annotations.items():
+        for (start, end), label in trigger_annotations.items():
             # Filter only those non-empty charseq mentions
             # within the sentence boundaries
             if not sentence_start <= start < end < sentence_end:
@@ -113,16 +117,16 @@ class ACE2005TriggerReader(DatasetReader):
             # These retained events should be only used for training.
             trigger_token_seqs[start_idx, end_idx] = label
             for idx in range(start_idx, end_idx + 1):
-                event_labels[idx] = label
+                trigger_labels[idx] = label
 
-        return self._build_instance(tokens, event_labels,
-                                    trigger_char_seqs=trigger_char_seqs,
+        return self._build_instance(tokens, trigger_labels,
                                     trigger_token_seqs=trigger_token_seqs,
+                                    trigger_char_seqs=trigger_char_seqs,
                                     **metadata)
 
     def _process_doc(self,
                      text: str,
-                     event_annotations: Dict[Tuple[int, int], str] = None) -> Iterator[Instance]:
+                     trigger_annotations: Dict[Tuple[int, int], str] = None) -> Iterator[Instance]:
         # Split the sentences. Non-destructive splitter is needed. e.g. `spacy_raw`
         sentences = self._sentence_splitter.split_sentences(text)
         assert ''.join(sentences) == text
@@ -133,7 +137,7 @@ class ACE2005TriggerReader(DatasetReader):
             # TODO skip first few lines / headers
             yield self._process_sentence(sentence,
                                          sentence_offset,
-                                         event_annotations)
+                                         trigger_annotations)
             sentence_offset += len(sentence)
 
     def _read_doc(self,
@@ -141,11 +145,11 @@ class ACE2005TriggerReader(DatasetReader):
                   apf_xml_path: Path = None) -> Iterator[Instance]:
         text = self._read_sgm_text(sgm_path)
 
-        event_annotations = None
+        trigger_annotations = None
         if apf_xml_path is not None:
-            event_annotations = self._read_apf_xml_annotataions(apf_xml_path, text)
+            trigger_annotations = self._read_apf_xml_annotataions(apf_xml_path, text)
 
-        yield from self._process_doc(text, event_annotations)
+        yield from self._process_doc(text, trigger_annotations)
 
     def _read_apf_xml_annotataions(self,
                                    apf_path: Path,
@@ -156,7 +160,7 @@ class ACE2005TriggerReader(DatasetReader):
         apf_xml = apf_path.read_text(encoding='utf-8')
         soup = BeautifulSoup(apf_xml, 'xml')
 
-        event_annotations: Dict[Tuple[int, int], str] = dict()
+        trigger_annotations: Dict[Tuple[int, int], str] = dict()
         for event in soup.find_all('event'):
             event_type: str = event.get('TYPE')
             event_subtype: str = event.get('SUBTYPE')
@@ -172,7 +176,7 @@ class ACE2005TriggerReader(DatasetReader):
                 label = f'{event_type}.{event_subtype}'
 
                 mention = start, end
-                event_annotations[mention] = label
+                trigger_annotations[mention] = label
 
                 if text is not None:
                     expected = charseq.text.replace('\n', ' ')
@@ -183,34 +187,7 @@ class ACE2005TriggerReader(DatasetReader):
                                        f'Found: {text_found}')
                         # raise ValueError('Mention text mismatch')
 
-        return event_annotations
-
-    def _build_instance(self,
-                        tokens: List[Token],
-                        event_labels: List[str] = None,
-                        **metadata) -> Instance:
-        fields: Dict[str, Field] = dict()
-
-        # First, populate fields with provided metadata
-        for key, value in metadata.items():
-            fields[key] = MetadataField(value)
-
-        # Building different discrete representations for text embedders.
-        text_field = TextField(tokens, self._token_indexers)
-        fields['text'] = text_field
-        # Additionally, raw tokens are also stored for reverse mapping
-        fields['tokens'] = MetadataField(tokens)
-
-        # Build an Instance without annotations to use in inference phase.
-        if event_labels is None:
-            return Instance(fields)
-
-        event_labels_field = SequenceLabelField(event_labels,
-                                                text_field,
-                                                self._event_label_namespace)
-        fields['event_labels'] = event_labels_field
-
-        return Instance(fields)
+        return trigger_annotations
 
     def _read(self, file_path: str) -> Iterator[Instance]:
         num_docs_read = 0
@@ -241,8 +218,3 @@ class ACE2005TriggerReader(DatasetReader):
 
         logger.info(f'Read {num_docs_read} docs')
         logger.info(f'Read {num_instances_read} instances')
-
-    def text_to_instance(self, tokens: List[str]) -> Instance:
-        # Very temporary
-        sentence = ''.join([token.text_with_ws for token in tokens])
-        return self._process_sentence(sentence)
