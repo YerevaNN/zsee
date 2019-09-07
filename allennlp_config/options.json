@@ -3,7 +3,7 @@
   "lr": [1, 3, 10],
   "balance": [0, 1],
   "encoding_dim": [400, 200, 600],
-  "spacy_model": ["en_core_web_md"],
+  "spacy_model": ["en_core_web_sm"],
   "grad_norm": [0, 5],
   "use_glove_embedding": [1, 0],
   "embeddings_dropout": [0, 50],

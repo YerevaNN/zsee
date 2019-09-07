@@ -1,10 +1,10 @@
 local glove_embedding_dim = 300;
-local char_embedding_dim = 100;
+local char_embedding_dim = 100; // 0; // 100;
 local elmo_embedding_dim = 0; // 1024;
-local bert_embedding_dim  = 768;
+local bert_embedding_dim  = 768; //0; //768;
 
 local embedding_dim = glove_embedding_dim + 3 * char_embedding_dim + elmo_embedding_dim + bert_embedding_dim ;
-local encoding_dim = 150;
+local encoding_dim = 400; // embedding_dim; // 100;
 
 {
   "dataset_reader": {
@@ -44,6 +44,7 @@ local encoding_dim = 150;
 
   "train_data_path": 'data/LDC2006T06/en_train.files',
   "validation_data_path": 'data/LDC2006T06/en_dev.files',
+  "test_data_path": 'data/LDC2006T06/en_test.files',
 
   "model": {
     "type": "zsee",
@@ -53,7 +54,7 @@ local encoding_dim = 150;
         "bert": ["bert", "bert-offsets"],
         "token_characters": ["token_characters"],
         "tokens": ["tokens"],
-//        "elmo": ["elmo"]
+        "elmo": ["elmo"]
       },
       "token_embedders": {
         "tokens": {
@@ -88,27 +89,44 @@ local encoding_dim = 150;
         }
       }
     },
+//    "encoder": {
+//        "type": "pass_through",
+//        "input_dim": embedding_dim
+//    },
     "encoder": {
         "type": "lstm",
         "input_size": embedding_dim,
         "hidden_size": encoding_dim,
-        "num_layers": 1,
-        "bidirectional": true
+        "num_layers": 2,
+        "bidirectional": true,
+        "dropout": 0.0
     },
+//    "encoder": {
+//        "type": "stacked_bidirectional_lstm",
+//        "input_size": embedding_dim,
+//        "hidden_size": encoding_dim,
+//        "num_layers": 1,
+//        "layer_dropout_probability": 0.4,
+//        "recurrent_dropout_probability": 0.4
+//    },
+    "embeddings_dropout": 0.0,
+    "dropout": 0.0,
+    "balance": true
+
   },
   "iterator": {
     "type": "basic",
 //    "sorting_keys": [["text", "num_tokens"]],
 //    "padding_noise": 0.0,
-    "batch_size": 32,
+    "batch_size": 16,
 //    "biggest_batch_first": true
   },
   "trainer": {
     "num_epochs": 1000,
 //    "grad_norm": 5.0,
-    "patience" : 150,
-//    "cuda_device" : 0,
-//    "validation_metric": "+bind_f1",
+    "patience" : 300,
+    "cuda_device" : 0,
+    "validation_metric": "+averaged_f1",
 //    "learning_rate_scheduler": {
 //      "type": "reduce_on_plateau",
 //      "factor": 0.5,
