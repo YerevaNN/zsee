@@ -1,2 +1,2 @@
 from .utils import SpacyRawSentenceSplitter
-from .dataset_readers import APFTriggerReader
+from .apf_trigger_reader import APFTriggerReader

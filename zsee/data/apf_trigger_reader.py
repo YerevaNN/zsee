@@ -3,8 +3,7 @@ import os
 import re
 from typing import Dict, Iterator, List, Tuple, Any
 
-from allennlp.data import DatasetReader, Instance, TokenIndexer, Tokenizer, Token, Field
-from allennlp.data.fields import TextField, SequenceLabelField, MetadataField
+from allennlp.data import DatasetReader, Instance, TokenIndexer, Tokenizer
 from allennlp.data.tokenizers import SentenceSplitter
 
 from bs4 import BeautifulSoup
