@@ -17,10 +17,12 @@ class PrecisionRecallFScore(Metric):
     def __init__(self,
                  labels: List[str] = None,
                  beta: float = 1,
-                 prefix: str = '') -> None:
+                 prefix: str = '',
+                 report_labelwise: bool = False) -> None:
         self._labels = labels
         self._beta = beta
         self._prefix = prefix
+        self._report_labelwise = report_labelwise
         # Metrics are reported for each label, so we compute statistics
         # for each label separately.
         self._labelwise_confusion_matrices: Dict[str, ConfusionMatrix] = defaultdict(ConfusionMatrix)
@@ -140,11 +142,13 @@ class PrecisionRecallFScore(Metric):
             averaged += confusion_matrix
 
         scores: Dict[str, Any] = dict()
+
         for label in self._labels:
             prefix = f'{self._prefix}labelwise/{label}'
             label_scores = self._compute_scores(self._labelwise_confusion_matrices[label],
                                                 prefix)
-            scores.update(label_scores)
+            if self._report_labelwise:
+                scores.update(label_scores)
 
         prefix = f'{self._prefix}averaged'
         averaged_scores = self._compute_scores(averaged, prefix)
