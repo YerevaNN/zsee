@@ -29,7 +29,8 @@ class BIOTriggerReader(TriggerReader):
                     bio_tags.clear()
                     continue
 
-                token, bio_tag = line.split('\t')
+                # Here we split the line only with the rightmost whitespace
+                token, bio_tag = line.rsplit(maxsplit=1)
                 tokens.append(token)
                 bio_tags.append(bio_tag)
 
@@ -42,26 +43,26 @@ class BIOTriggerReader(TriggerReader):
 
         # Offset of the current token of the span, inclusive
         first_idx = 0
-        last_idx = 0
 
         for idx, bio_tag in enumerate(bio_tags):
             bio, _, label = bio_tag.partition('-')
             label = label.replace(':', '.')  # Make label names TensorBoard-friendly
-            if bio == 'B':
-                first_idx = idx
-                last_idx = idx
-                token_seqs[first_idx, last_idx] = label
-            elif bio == 'I':
-                del token_seqs[first_idx, last_idx]
-                last_idx = idx
-                token_seqs[first_idx, last_idx] = label
-            else:
-                label = 'O'
 
+            if bio == 'O':
+                labels.append('O')
+                continue
+
+            if bio == 'B':
+                # Define the index of the first token of the span
+                first_idx = idx
+            else:
+                # Remove previous span so the expanded one can be added
+                del token_seqs[first_idx, idx - 1]
+
+            token_seqs[first_idx, idx] = label
             labels.append(label)
 
         return labels, token_seqs
-
 
     def _read(self, file_path: str) -> Iterator[Instance]:
         for tokens, bio_tags in self._read_bio_sentences(file_path):
