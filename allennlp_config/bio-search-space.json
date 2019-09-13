@@ -1,0 +1,69 @@
+{
+  "SEED": {
+    "sampling strategy": "integer",
+    "bounds": [0, 100000]
+  },
+  "BERT_PRETRAINED_MODEL": {
+    "sampling strategy": "choice",
+    "choices": [
+      "bert-base-multilingual-cased"
+    ]
+  },
+  "BERT_DO_LOWERCASE": {
+    "sampling strategy": "choice",
+    "choices": [
+      "false"
+    ]
+  },
+  "MAX_PIECES": 512,
+  "BATCH_SIZE": {
+    "sampling strategy": "choice",
+    "choices": [4, 16, 64]
+  },
+  "BALANCE": {
+    "sampling strategy": "choice",
+    "choices": ["true"]
+  },
+  "ENCODER_DROPOUT": {
+    "sampling strategy": "uniform",
+    "bounds": [0, 0.5]
+  },
+  "EMBEDDING_DROPOUT": {
+    "sampling strategy": "uniform",
+    "bounds": [0, 0.5]
+  },
+  "NUM_LAYERS": {
+    "sampling strategy": "choice",
+    "choices": [1]
+  },
+  "HIDDEN_DIMS": {
+    "sampling strategy": "choice",
+    "choices": [64, 256, 512, 768, 1024]
+  },
+  "ACTIVATION": {
+    "sampling strategy": "choice",
+    "choices": ["relu", "tanh"]
+  },
+  "BERT_TRAIN": {
+    "sampling strategy": "choice",
+    "choices": ["false"]
+  },
+  "BERT_TOP_LAYER_ONLY": {
+    "sampling strategy": "choice",
+    "choices": ["false", "true"]
+  },
+  "CUDA_DEVICE": 0,
+  "GRAD_NORM": {
+    "sampling strategy": "choice",
+    "choices": [5.0, 50.0]
+  },
+  "NUM_EPOCHS": 60,
+  "OPTIMIZER": {
+    "sampling strategy": "choice",
+    "choices": ["dense_sparse_adam"]
+  },
+  "LEARNING_RATE": {
+    "sampling strategy": "loguniform",
+    "bounds": [1e-4, 1e-1]
+  }
+}
