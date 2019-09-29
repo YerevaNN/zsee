@@ -11,7 +11,6 @@ LabellingsList = List[Tuple[Any, str]]
 Labellings = Union[LabellingsDict, LabellingsList]
 
 
-
 @Metric.register('precision_recall_fscore')
 class PrecisionRecallFScore(Metric):
     def __init__(self,
@@ -44,7 +43,6 @@ class PrecisionRecallFScore(Metric):
             for label in self._labels:
                 label_confusion_matrix = labelwise_confusion_matrices[label]
                 self._labelwise_confusion_matrices[label] += label_confusion_matrix
-
 
     def _compare_sample(self,
                         predictions: LabellingsList,
