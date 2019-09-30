@@ -2,6 +2,8 @@ from typing import Any, Dict, List
 
 from overrides import overrides
 
+import numpy as np
+
 from allennlp.common.util import JsonDict, sanitize
 from allennlp.data import DatasetReader, Instance
 from allennlp.data.tokenizers.word_splitter import SpacyWordSplitter
@@ -11,8 +13,13 @@ from allennlp.predictors.predictor import Predictor
 
 @Predictor.register('trigger-tagger')
 class TriggerTaggerPredictor(Predictor):
-    def __init__(self, model: Model, dataset_reader: DatasetReader, language: str = 'en_core_web_sm') -> None:
+    def __init__(self,
+                 model: Model,
+                 dataset_reader: DatasetReader,
+                 language: str = 'en_core_web_sm',
+                 sanitize: bool = True) -> None:
         super().__init__(model, dataset_reader)
+        self._sanitize = sanitize
         self._tokenizer = SpacyWordSplitter(language=language, pos_tags=True,
                                             keep_spacy_tokens=True)
 
@@ -35,27 +42,59 @@ class TriggerTaggerPredictor(Predictor):
         tokens = self._tokenizer.split_words(sentence)
         return self._dataset_reader.text_to_instance(tokens)
 
-    def _process_outputs(self, outputs):
-        outputs["hierplane_tree"] = self._build_hierplane_tree(outputs)
-        return outputs
+    def _decode_wrt_mask(self, tensor, mask):
+        return np.stack([
+            vector
+            for vector, not_masked
+            in zip(tensor, mask)
+            if not_masked
+        ])
+
+    def _process_outputs(self, output_dict):
+        # TODO implement BIO-based NER visualization
+
+        # Construct hierplace tree
+        hierplane_tree = self._build_hierplane_tree(output_dict)
+        if hierplane_tree:
+            output_dict["hierplane_tree"] = hierplane_tree
+
+        # Unmask and decode embeddings w.r.t. mask
+        mask = output_dict["mask"]
+
+        contextual_embeddings = output_dict["contextual_embeddings"]
+        output_dict["contextual_embeddings"] = self._decode_wrt_mask(contextual_embeddings,
+                                                                     mask)
+        encoder_embeddings = output_dict["encoder_embeddings"]
+        output_dict["encoder_embeddings"] = self._decode_wrt_mask(encoder_embeddings,
+                                                                  mask)
+
+        return output_dict
 
     @overrides
     def predict_instance(self, instance: Instance) -> JsonDict:
         outputs = self._model.forward_on_instance(instance)
         outputs = self._process_outputs(outputs)
-        return sanitize(outputs)
+
+        if self._sanitize:
+            outputs = sanitize(outputs)
+        return outputs
 
     @overrides
     def predict_batch_instance(self, instances: List[Instance]) -> List[JsonDict]:
         outputs = self._model.forward_on_instances(instances)
         for output in outputs:
             output = self._process_outputs(output)
-        return sanitize(outputs)
 
+        if self._sanitize:
+            outputs = sanitize(outputs)
+        return outputs
 
     def _build_hierplane_tree(self, output_dict: Dict[str, Any]) -> JsonDict:
-        text = output_dict['raw_sentence']
-        triggers = output_dict['pred_trigger_char_seqs']
+        text = output_dict.get('raw_sentence')
+        triggers = output_dict.get('pred_trigger_char_seqs')
+
+        if text is None or triggers is None:
+            return dict()
 
         def build_spans(spans, range_start, range_end):
             spans = list(spans)
@@ -81,7 +120,6 @@ class TriggerTaggerPredictor(Predictor):
                 })
 
             return new_spans
-
 
         hierplane_tree = {
           "text": text,
