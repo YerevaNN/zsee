@@ -8,6 +8,7 @@ from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_lo
 from allennlp.training.metrics import CategoricalAccuracy
 from torch.nn import Dropout, Linear
 
+from .jmee.metrics import SeqEvalPrecisionRecallFScore
 from .metrics import PrecisionRecallFScore
 
 
@@ -48,6 +49,7 @@ class ZSEE(Model):
         self._prf_char_seqs = PrecisionRecallFScore(labels=list(labels))
         self._prf_token_seqs = PrecisionRecallFScore(labels=list(labels),
                                                      prefix='token_level/')
+        self._prf_jmee = SeqEvalPrecisionRecallFScore()
 
     def _balancing_weights(self,
                            labels: torch.Tensor,
@@ -133,6 +135,13 @@ class ZSEE(Model):
             self._prf_char_seqs(output_dict['pred_trigger_char_seqs'],
                                 metadata['trigger_char_seqs'])
 
+        batch_tokens = output_dict['tokens']
+        self._prf_jmee(self._decode_trigger_bio(batch_tokens,
+                                                output_dict['pred_trigger_token_seqs']),
+                       self._decode_trigger_bio(batch_tokens,
+                                                metadata['trigger_token_seqs'])
+                       )
+
         return output_dict
 
     class Char2TokenMappingMissing(Exception):
@@ -159,9 +168,26 @@ class ZSEE(Model):
                                                                           batch_pred_trigger_token_seqs)
             output_dict['pred_trigger_char_seqs'] = batch_pred_trigger_char_seqs
         except ZSEE.Char2TokenMappingMissing:
-            output_dict['pred_trigger_char_seqs'] = None
+            pass
+            # output_dict['pred_trigger_char_seqs'] = None
 
         return output_dict
+
+    def _decode_trigger_bio(self,
+                            batch_tokens: List[List[Token]],
+                            batch_pred_trigger_token_seqs: List[List[Tuple[Tuple[int, int], str]]]
+                            ):
+        batch_outputs = []
+        for tokens, pred_trigger_token_seqs in zip(batch_tokens, batch_pred_trigger_token_seqs):
+            outputs = ['O' for _ in tokens]
+            if not isinstance(pred_trigger_token_seqs, list):
+                pred_trigger_token_seqs = pred_trigger_token_seqs.items()
+            for (first, last), label in pred_trigger_token_seqs:
+                outputs[first] = f'B-{label}'
+                for idx in range(first + 1, last + 1):
+                    outputs[idx] = f'I-{label}'
+            batch_outputs.append(outputs)
+        return batch_outputs
 
     def _decode_trigger_token_seqs(self,
                                    batch_pred_tags: torch.Tensor,
@@ -248,11 +274,13 @@ class ZSEE(Model):
 
         prf_char_seqs = self._prf_char_seqs.get_metric(reset)
         prf_token_seqs = self._prf_token_seqs.get_metric(reset)
+        prf_jmee = self._prf_jmee.get_metric(reset)
 
         scores = {
             'accuracy': self._accuracy.get_metric(reset),
             **prf_char_seqs,
-            **prf_token_seqs
+            **prf_token_seqs,
+            **prf_jmee
         }
 
         return scores
