@@ -3,7 +3,7 @@ from typing import Dict, Any, Tuple, List, Union, Iterable
 import torch
 from allennlp.data import Vocabulary, Token
 from allennlp.models import Model
-from allennlp.modules import TextFieldEmbedder, Seq2SeqEncoder
+from allennlp.modules import TextFieldEmbedder, Seq2SeqEncoder, LayerNorm
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
 from allennlp.training.metrics import CategoricalAccuracy
 from torch.nn import Dropout, Linear
@@ -22,6 +22,7 @@ class ZSEE(Model):
                  dropout: float = 0,
                  verbose: Union[bool, Iterable[str]] = False,
                  balance: bool = False,
+                 normalize: str = None,
                  trigger_label_namespace: str = 'event_labels') -> None:
         super().__init__(vocab)
 
@@ -32,6 +33,8 @@ class ZSEE(Model):
         self._verbose = verbose
         self._balance = balance
         self._trigger_label_namespace = trigger_label_namespace
+
+        self._normalize = normalize
 
         num_trigger_classes = vocab.get_vocab_size(trigger_label_namespace)
         self._projection = Linear(in_features=encoder.get_output_dim(),
@@ -97,10 +100,22 @@ class ZSEE(Model):
 
         # Shape: (batch_size, num_tokens, embedding_dim)
         text_embeddings = self._text_field_embedder(text)
+
+        # Apply normalization layer if needed
+        # Shape: (batch_size, num_tokens, encoder_dim)
+        if self._normalize == "mean" or self._normalize == "layer":
+            text_embeddings = (text_embeddings - (text_embeddings * mask.unsqueeze(-1).float()).sum((0, 1), keepdim=True) / mask.unsqueeze(-1).float().sum((0, 1), keepdim=True))
+        elif self._normalize:
+            raise NotImplementedError
+
+        output_dict['contextual_embeddings'] = text_embeddings
+
+        # Shape: (batch_size, num_tokens, embedding_dim)
         text_embeddings = self._embeddings_dropout(text_embeddings)
 
         # Shape: (batch_size, num_tokens, encoder_dim)
         hidden = self._encoder(text_embeddings, mask)
+        output_dict['encoder_embeddings'] = hidden
         hidden = self._dropout(hidden)
 
         # Shape: (batch_size, num_tokens, num_trigger_classes)
