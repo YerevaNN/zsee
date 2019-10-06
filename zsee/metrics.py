@@ -1,6 +1,9 @@
 from collections import defaultdict, Counter
 
-from allennlp.training.metrics import Metric
+from torch import Tensor
+
+from allennlp.modules import SimilarityFunction
+from allennlp.training.metrics import Metric, Average
 
 from typing import Any, Dict, List, Tuple, Union
 
@@ -88,7 +91,8 @@ class PrecisionRecallFScore(Metric):
 
     def _compute_scores(self,
                         confusion_matrix: ConfusionMatrix,
-                        prefix: str = 'averaged'):
+                        prefix: str = 'averaged',
+                        verbose: bool = True):
         true_positives = confusion_matrix['TP']
         false_positives = confusion_matrix['FP']
         false_negatives = confusion_matrix['FN']
@@ -113,19 +117,25 @@ class PrecisionRecallFScore(Metric):
             denom = (self._beta ** 2) * precision + recall
             f_score = nom / denom
 
-        return {
-            f'{prefix}_TP': true_positives,
-            f'{prefix}_FP': false_positives,
-            f'{prefix}_FN': false_negatives,
-
+        metrics = {
             f'{prefix}_precision': precision,
             f'{prefix}_recall': recall,
 
             f'{prefix}_f{self._beta}': f_score
         }
 
+        if verbose:
+            metrics.update({
+                f'{prefix}_TP': true_positives,
+                f'{prefix}_FP': false_positives,
+                f'{prefix}_FN': false_negatives,
+            })
+
+        return metrics
+
     def get_metric(self,
-                   reset: bool) -> Dict[str, float]:
+                   reset: bool,
+                   verbose: bool = True) -> Dict[str, float]:
         """
         Compute and return the metric. Optionally also call :func:`self.reset`.
         """
@@ -144,12 +154,13 @@ class PrecisionRecallFScore(Metric):
         for label in self._labels:
             prefix = f'{self._prefix}labelwise/{label}'
             label_scores = self._compute_scores(self._labelwise_confusion_matrices[label],
-                                                prefix)
+                                                prefix,
+                                                verbose=verbose)
             if self._report_labelwise:
                 scores.update(label_scores)
 
         prefix = f'{self._prefix}averaged'
-        averaged_scores = self._compute_scores(averaged, prefix)
+        averaged_scores = self._compute_scores(averaged, prefix, verbose=verbose)
         scores.update(averaged_scores)
 
         if reset:
