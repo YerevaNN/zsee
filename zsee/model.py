@@ -282,14 +282,18 @@ class ZSEE(Model):
         return batch_predicted_triggers
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        if not reset and not self._verbose:
-            return dict()
+        verbose = self._verbose or reset
+        # if not reset and not self._verbose:
+        #     return dict()
 
         # TODO Show only keys of `self._verbose`
 
-        prf_char_seqs = self._prf_char_seqs.get_metric(reset)
-        prf_token_seqs = self._prf_token_seqs.get_metric(reset)
+        prf_char_seqs = self._prf_char_seqs.get_metric(reset, verbose=verbose)
+        prf_token_seqs = self._prf_token_seqs.get_metric(reset, verbose=verbose)
         prf_jmee = self._prf_jmee.get_metric(reset)
+
+        if not verbose:
+            return prf_jmee
 
         scores = {
             'accuracy': self._accuracy.get_metric(reset),
