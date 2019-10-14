@@ -1,9 +1,13 @@
+import logging
+
 from abc import ABC
 from typing import List, Dict, Tuple, Union
 
 from allennlp.data import DatasetReader, Instance, Field, TokenIndexer, Token
 from allennlp.data.fields import MetadataField, TextField, SequenceLabelField
 from spacy.tokens import Token as SpacyToken
+
+logger = logging.getLogger(__name__)
 
 
 class TriggerReader(DatasetReader, ABC):
@@ -39,6 +43,11 @@ class TriggerReader(DatasetReader, ABC):
         # Build an Instance without annotations to use in inference phase.
         if trigger_labels is None:
             return Instance(fields)
+
+        if len(trigger_labels) > len(tokens):
+            truncate_len = len(tokens)
+            trigger_labels = trigger_labels[:truncate_len]
+            logger.warning('Truncated tokens detected. Truncating labels as well.')
 
         trigger_labels_field = SequenceLabelField(trigger_labels,
                                                   text_field,
