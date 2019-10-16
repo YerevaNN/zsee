@@ -1,7 +1,9 @@
 import logging
 
+import pickle
+
 from abc import ABC
-from typing import List, Dict, Tuple, Union
+from typing import List, Dict, Tuple, Union, Iterable
 
 from allennlp.data import DatasetReader, Instance, Field, TokenIndexer, Token
 from allennlp.data.fields import MetadataField, TextField, SequenceLabelField
@@ -63,3 +65,11 @@ class TriggerReader(DatasetReader, ABC):
             for token in tokens                         # if available
         ])
         return self._build_instance(tokens, raw_sentence=raw_sentence)
+
+    def _instances_from_cache_file(self, cache_filename: str) -> Iterable[Instance]:
+        with open(cache_filename, 'rb') as f:
+            return pickle.load(f)
+
+    def _instances_to_cache_file(self, cache_filename, instances) -> None:
+        with open(cache_filename, 'wb') as f:
+            pickle.dump(instances, f, protocol=pickle.HIGHEST_PROTOCOL)

@@ -1,4 +1,5 @@
-from typing import Dict, Iterator
+import pickle
+from typing import Dict, Iterator, Iterable
 
 import logging
 
@@ -65,3 +66,11 @@ class MosesParallel(DatasetReader):
 
             if not limit_samples:
                 break
+
+    def _instances_from_cache_file(self, cache_filename: str) -> Iterable[Instance]:
+        with open(cache_filename, 'rb') as f:
+            return pickle.load(f)
+
+    def _instances_to_cache_file(self, cache_filename, instances) -> None:
+        with open(cache_filename, 'wb') as f:
+            pickle.dump(instances, f, protocol=pickle.HIGHEST_PROTOCOL)
