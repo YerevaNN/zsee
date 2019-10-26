@@ -1,3 +1,7 @@
+from . import text_field_embedder
+from .text_field_embedder import PretrainedModelTextFieldEmbedder
+from .text_field_embedder import MappedTextFieldEmbedder
+
 from .model import ZSEE
 from .metrics import PrecisionRecallFScore
 from .predictors import TriggerTaggerPredictor
