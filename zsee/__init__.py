@@ -1,3 +1,5 @@
+import allennlp
+
 from . import data
 from .data import DatasetMingler
 
