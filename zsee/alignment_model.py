@@ -118,6 +118,7 @@ class AlignmentModel(Model):
         self._triplet_loss_margin = triplet_loss_margin
         self._verbose = verbose
 
+        self._num_samples_seen = 0
         self._average_distance = Average()
         self._average_pairwise_distance = Average()
         self._average_source_pairwise_distance = Average()
@@ -210,6 +211,8 @@ class AlignmentModel(Model):
             output_dict['loss'] = (positive_loss - negative_loss).clamp(min=0)
 
         with torch.no_grad():
+            self._num_samples_seen += 1
+
             self._alignment_accuracy(source_embeddings, target_embeddings)
 
             self._average_distance(distance.mean().item())
@@ -223,7 +226,10 @@ class AlignmentModel(Model):
         verbose = self._verbose or reset
 
         if not verbose:
-            return {}
+            return dict()
+
+        if not self._num_samples_seen:
+            return dict()
 
         return {
             'alignment_accuracy': self._alignment_accuracy.get_metric(reset),

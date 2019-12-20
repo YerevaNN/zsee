@@ -23,6 +23,9 @@ class SeqEvalPrecisionRecallFScore(Metric):
         if not reset:
             return dict()
 
+        if not self._predictions:
+            return dict()
+
         metrics = {
             'seqeval_precision': precision_score(self._gold_labels, self._predictions),
             'seqeval_recall': recall_score(self._gold_labels, self._predictions),
