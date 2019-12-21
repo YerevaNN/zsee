@@ -27,7 +27,7 @@ class MultiTaskModel(Model):
                 output_dict = model(**kwargs)
                 if output_dict is not None:
                     if 'loss' in output_dict:
-                        output_dict['loss'] *= loss_weight
+                        output_dict['loss'] *= float(loss_weight)
                     return output_dict
             except TypeError as e:
                 continue
