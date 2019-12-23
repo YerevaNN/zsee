@@ -1,8 +1,9 @@
 import logging
 import os
 import re
+from collections import defaultdict
 
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 
 import torch
 
@@ -43,6 +44,7 @@ class MultiTaskTrainer(CallbackTrainer):
                          serialization_dir, cuda_device,
                          callbacks)
         self.data_config = data_config
+        self.datasets_metrics: Dict[str, Dict[str, float]] = defaultdict(dict)
 
     @classmethod
     def trainer_pieces(cls,
@@ -78,8 +80,7 @@ class MultiTaskTrainer(CallbackTrainer):
         # Initializing the model can have side effect of expanding the vocabulary
         vocab.save_to_files(os.path.join(serialization_dir, "vocabulary"))
 
-        for iterator in data_config.iterators.values():
-            iterator.index_with(model.vocab)
+        data_config.index_with(model.vocab)
 
         no_grad_regexes = params.get("trainer").pop("no_grad", ())
         for name, parameter in model.named_parameters():

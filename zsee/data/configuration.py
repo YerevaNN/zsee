@@ -1,10 +1,14 @@
 import logging
-from typing import Dict, List, Iterable, Set, Optional, Any
+from typing import Dict, List, Iterable, Set, Optional, Any, Iterator
+
+from overrides import overrides
 
 from allennlp.common import Params
 from allennlp.common.checks import ConfigurationError
 from allennlp.common.registrable import Registrable
-from allennlp.data import DatasetReader, DataIterator, Instance
+from allennlp.data import DatasetReader, DataIterator, Instance, Vocabulary
+from allennlp.data.iterators.data_iterator import TensorDict
+from allennlp.training.data_configuration import DataConfigurationBase, DataConfiguration
 from allennlp.training.util import _set_up_cache_files
 
 from .dataset_mingler import DatasetMingler
@@ -12,21 +16,9 @@ from .dataset_mingler import DatasetMingler
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
-class DataConfigurationBase(Registrable):
-    default_implementation = "default"
-
-    def __init__(self):
-        self.paths: Dict[str, str] = dict()
-        self.datasets_for_training: Set[str] = set()
-        self.datasets_for_vocab_creation: Set[str] = set()
-        self.dataset_readers: Dict[str, DatasetReader] = dict()
-        self.iterators: Dict[str, DataIterator] = dict()
-        self.instances: Dict[str, Iterable[Instance]] = dict()
-        self.mingler: Optional[DatasetMingler] = None
-
-
-@DataConfigurationBase.register('default')
-class DataConfiguration(DataConfigurationBase):
+@DataConfigurationBase.register('legacy')
+@DataConfigurationBase.register('default', exist_ok=True)
+class LegacyDataConfiguration(DataConfigurationBase):
     def __init__(self,
                  paths: Dict[str, str],
                  datasets_for_training: List[str] = None,
@@ -39,7 +31,7 @@ class DataConfiguration(DataConfigurationBase):
                  iterators: Dict[str, DataIterator] = None,
                  validation_iterator: DataIterator = None):
         super().__init__()
-
+        
         self.mingler = mingler
         # TODO add checks
         self.paths = paths
@@ -60,6 +52,28 @@ class DataConfiguration(DataConfigurationBase):
         self.init_dataset_readers(dataset_readers, dataset_reader, validation_dataset_reader)
         self.init_iterators(iterators, iterator, validation_iterator)
         self.init_instances()
+
+    @overrides
+    def get_batches(self, dataset: str = '_train', num_epochs: int = None, shuffle: bool = True) -> Iterator[TensorDict]:
+        instances = self.instances[dataset]
+        iterator = self.iterators[dataset]
+        yield from iterator(instances, num_epochs=1, shuffle=False)
+
+    @overrides
+    def get_num_batches(self, dataset: str = '_train'):
+        instances = self.instances[dataset]
+        iterator = self.iterators[dataset]
+        return iterator.get_num_batches(instances)
+
+    @overrides
+    def get_train_batches(self, num_epochs: int = None, shuffle: bool = True) -> Iterator[TensorDict]:
+        return self.get_batches(dataset='_train',
+                                num_epochs=num_epochs,
+                                shuffle=shuffle)
+
+    @overrides
+    def get_num_train_batches(self):
+        return self.get_num_batches(dataset='_train')
 
     def init_instances(self):
         self.instances = {}
@@ -148,6 +162,10 @@ class DataConfiguration(DataConfigurationBase):
 
         self.iterators = iterators
 
+    def index_with(self, vocab: Vocabulary):
+        for iterator in self.iterators.values():
+            iterator.index_with(vocab)
+
     @classmethod
     def dataset_reader_from_params(cls,
                                    params: Params,
@@ -168,6 +186,14 @@ class DataConfiguration(DataConfigurationBase):
                     cache_directory: str = None,
                     cache_prefix: str = None,
                     **extras):
+        # Here handle legacy part
+        # The new interface requires `datasets`
+        if params.get('datasets', None):
+            return DataConfiguration.from_params(params,
+                                                 cache_directory=cache_directory,
+                                                 cache_prefix=cache_prefix,
+                                                 **extras)
+
         datasets_extras: Dict[str, Any] = dict()
 
         dataset_reader_params = params.pop('dataset_reader', None)
