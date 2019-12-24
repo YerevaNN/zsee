@@ -6,7 +6,7 @@ import numpy as np
 
 from allennlp.common.util import JsonDict, sanitize
 from allennlp.data import DatasetReader, Instance
-from allennlp.data.tokenizers.word_splitter import SpacyWordSplitter
+from allennlp.data.tokenizers import SpacyTokenizer
 from allennlp.models import Model
 from allennlp.predictors.predictor import Predictor
 
@@ -20,8 +20,8 @@ class TriggerTaggerPredictor(Predictor):
                  sanitize: bool = True) -> None:
         super().__init__(model, dataset_reader)
         self._sanitize = sanitize
-        self._tokenizer = SpacyWordSplitter(language=language, pos_tags=True,
-                                            keep_spacy_tokens=True)
+        self._tokenizer = SpacyTokenizer(language=language, pos_tags=True,
+                                         keep_spacy_tokens=True)
 
     @overrides
     def load_line(self, line: str) -> JsonDict:
@@ -39,7 +39,7 @@ class TriggerTaggerPredictor(Predictor):
         Runs the underlying model, and adds the ``"words"`` to the output.
         """
         sentence = json_dict["sentence"]
-        tokens = self._tokenizer.split_words(sentence)
+        tokens = self._tokenizer.tokenize(sentence)
         return self._dataset_reader.text_to_instance(tokens)
 
     def _decode_wrt_mask(self, tensor, mask):
