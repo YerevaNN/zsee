@@ -96,9 +96,9 @@ class AlignmentMetric(Metric):
 class AlignmentModel(Model):
     def __init__(self,
                  vocab: Vocabulary,
-                 pooler: Seq2VecEncoder,
                  distance: SimilarityFunction,
                  text_field_embedder: TextFieldEmbedder = None,
+                 pooler: Seq2VecEncoder = None,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  map_both: bool = False,
                  models: List[Model] = None,
@@ -106,10 +106,16 @@ class AlignmentModel(Model):
                  verbose: bool = False) -> None:
         super().__init__(vocab)
 
+        # This is hack to share
         if text_field_embedder is None:
             for model in models:
                 text_field_embedder = getattr(model, '_text_field_embedder', text_field_embedder)
             assert text_field_embedder is not None
+        if pooler is None:
+            for model in models:
+                pooler = getattr(model, '_pooler', pooler)
+            assert pooler
+
         self._text_field_embedder = text_field_embedder
         self._pooler = pooler
         self._distance = distance
