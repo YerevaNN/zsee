@@ -1,5 +1,6 @@
 import math
 
+from overrides import overrides
 from torch import Tensor
 from torch.nn import Module, Parameter, init
 
@@ -16,5 +17,6 @@ class BiasOnly(Module, FromParams):
     def reset_parameters(self):
         init.zeros_(self._bias)
 
+    @overrides
     def forward(self, inputs: Tensor):
         return inputs + self._bias
