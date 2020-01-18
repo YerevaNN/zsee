@@ -4,6 +4,7 @@ from typing import List, Dict, Tuple, Iterator
 from tqdm import tqdm
 
 from allennlp.data import Token, Instance, TokenIndexer, DatasetReader
+from .translation_service import TranslationService
 
 from .trigger_reader import TriggerReader
 
@@ -20,12 +21,15 @@ class BIOTriggerReader(TriggerReader):
                  null_label: bool = False,
                  lazy: bool = False,
                  show_progress: bool = False,
+                 translation_service: TranslationService = None
+                 ) -> None:
         self._show_progress = show_progress
         super().__init__(token_indexers,
                          trigger_label_namespace,
                          lazy=lazy,
                          multi_label=multi_label,
                          null_label=null_label,
+                         translation_service=translation_service
                          )
 
     def _read_bio_sentences(self, file_path: str) -> Iterator[Tuple[List[str], List[str]]]:
@@ -96,3 +100,6 @@ class BIOTriggerReader(TriggerReader):
             instances = list(instances)
 
         yield from instances
+
+        if self._translation_service:
+            self._translation_service.close()

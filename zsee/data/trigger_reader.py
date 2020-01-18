@@ -9,6 +9,7 @@ from allennlp.data import DatasetReader, Instance, Field, TokenIndexer, Token
 from allennlp.data.fields import MetadataField, TextField, SequenceLabelField, MultiLabelField
 from spacy.tokens import Token as SpacyToken
 
+from .translation_service import TranslationService
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class TriggerReader(DatasetReader, ABC):
                  lazy: bool = False,
                  multi_label: bool = True,
                  null_label: bool = False,
+                 translation_service: TranslationService = None
                  ) -> None:
         super().__init__(lazy)
 
@@ -27,6 +29,7 @@ class TriggerReader(DatasetReader, ABC):
         self._trigger_label_namespace = trigger_label_namespace
         self._multi_label = multi_label
         self._null_label = null_label
+        self._translation_service = translation_service
 
     def read(self, file_path: str) -> Iterable[Instance]:
         instances = super().read(file_path)
@@ -47,6 +50,10 @@ class TriggerReader(DatasetReader, ABC):
                         trigger_labels: List[str] = None,
                         trigger_token_seqs: Dict[Tuple[int, int], str] = None,
                         **metadata) -> Instance:
+        # Translate sentence if translation_service is provided
+        if self._translation_service is not None:
+            tokens = self._translation_service(tokens)
+
         fields: Dict[str, Field] = dict()
 
         # First, populate fields with provided metadata
@@ -66,15 +73,20 @@ class TriggerReader(DatasetReader, ABC):
         if trigger_labels is None:
             return Instance(fields)
 
-        if len(trigger_labels) > len(tokens):
-            truncate_len = len(tokens)
-            trigger_labels = trigger_labels[:truncate_len]
-            logger.warning('Truncated tokens detected. Truncating labels as well.')
+        if self._translation_service is None:
+            # If the sentence is translated we have no alignments
+            # for token-level labels, so we skip them
 
-        trigger_labels_field = SequenceLabelField(trigger_labels,
-                                                  text_field,
-                                                  self._trigger_label_namespace)
-        fields['trigger_labels'] = trigger_labels_field
+            if len(trigger_labels) > len(tokens):
+                truncate_len = len(tokens)
+                trigger_labels = trigger_labels[:truncate_len]
+                logger.warning('Truncated tokens detected. Truncating labels as well.')
+
+            # Token-level trigger labels
+            trigger_labels_field = SequenceLabelField(trigger_labels,
+                                                      text_field,
+                                                      self._trigger_label_namespace)
+            fields['trigger_labels'] = trigger_labels_field
 
         # Sentence-level trigger label(s)
         # if not self._multi_label:
