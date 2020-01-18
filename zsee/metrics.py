@@ -177,3 +177,50 @@ class PrecisionRecallFScore(Metric):
         Reset any accumulators or internal state.
         """
         self._labelwise_confusion_matrices.clear()
+
+
+@Metric.register('multi_class_confusion_matrix')
+class MultiClassConfusionMatrix(Metric):
+
+    def __init__(self,
+                 labels: List[str] = None,
+                 beta: float = 1,
+                 prefix: str = '') -> None:
+        self._labels = labels
+        self._beta = beta
+        self._prefix = prefix
+        self._confusion_matrix = torch.zeros(len(labels), len(labels), dtype=torch.int32)
+
+    def __call__(self,
+                 batch_predictions: Iterable[Union[int, str]],
+                 batch_gold_labels: Iterable[Union[int, str]],
+                 **kwargs):
+        for prediction, gold_label in zip(batch_predictions, batch_gold_labels):
+            if isinstance(prediction, str):
+                prediction = self._labels.index(prediction)
+            if isinstance(gold_label, str):
+                gold_label = self._labels.index(gold_label)
+            self._confusion_matrix[gold_label, prediction] += 1
+
+    def get_metric(self, reset: bool) -> Dict[str, Any]:
+        # if not reset:
+        #     return {}
+
+        # fig = _figure(self._confusion_matrix, self._labels)
+
+        metrics = {
+            f'{self._prefix}confusion_matrix': {
+                'type': 'confusion_matrix',
+                'labels': self._labels,
+                'confusion_matrix': self._confusion_matrix.tolist()
+            }
+        }
+
+        if reset:
+            self.reset()
+
+        return metrics
+
+    def reset(self) -> None:
+        self._confusion_matrix.zero_()
+
