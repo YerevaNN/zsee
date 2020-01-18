@@ -3,7 +3,7 @@ from typing import Dict, Any, Tuple, List, Union, Iterable
 import torch
 from allennlp.data import Vocabulary, Token
 from allennlp.models import Model
-from allennlp.modules import TextFieldEmbedder, Seq2SeqEncoder, LayerNorm
+from allennlp.nn import InitializerApplicator
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
 from allennlp.training.metrics import CategoricalAccuracy
 from torch.nn import Dropout, Linear
@@ -23,7 +23,8 @@ class ZSEE(Model):
                  verbose: Union[bool, Iterable[str]] = False,
                  balance: bool = False,
                  normalize: str = None,
-                 trigger_label_namespace: str = 'event_labels') -> None:
+                 trigger_label_namespace: str = 'event_labels',
+                 initializer: InitializerApplicator = InitializerApplicator()) -> None:
         super().__init__(vocab)
 
         self._text_field_embedder = text_field_embedder
@@ -53,6 +54,8 @@ class ZSEE(Model):
         self._prf_token_seqs = PrecisionRecallFScore(labels=list(labels),
                                                      prefix='token_level/')
         self._prf_jmee = SeqEvalPrecisionRecallFScore()
+
+        initializer(self)
 
     def _balancing_weights(self,
                            labels: torch.Tensor,
