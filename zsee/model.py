@@ -1,8 +1,11 @@
 from typing import Dict, Any, Tuple, List, Union, Iterable
 
+from overrides import overrides
 import torch
+from torch import Tensor
 from allennlp.data import Vocabulary, Token
 from allennlp.models import Model
+from allennlp.modules import TextFieldEmbedder, Seq2SeqEncoder, Seq2VecEncoder, FeedForward
 from allennlp.nn import InitializerApplicator
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
 from allennlp.training.metrics import CategoricalAccuracy
@@ -13,14 +16,17 @@ from .metrics import PrecisionRecallFScore
 
 
 @Model.register('zsee')
+@Model.register('token_level')
 class ZSEE(Model):
     def __init__(self,
                  vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  encoder: Seq2SeqEncoder,
+                 *,
                  embeddings_dropout: float = 0,
                  dropout: float = 0,
                  verbose: Union[bool, Iterable[str]] = False,
+                 report_labelwise: bool = False,
                  balance: bool = False,
                  normalize: str = None,
                  trigger_label_namespace: str = 'event_labels',
@@ -32,17 +38,20 @@ class ZSEE(Model):
         self._embeddings_dropout = Dropout(embeddings_dropout)
         self._dropout = Dropout(dropout)
         self._verbose = verbose
+        self._report_labelwise = report_labelwise
         self._balance = balance
         self._trigger_label_namespace = trigger_label_namespace
 
         self._normalize = normalize
 
         num_trigger_classes = vocab.get_vocab_size(trigger_label_namespace)
+        self._num_trigger_classes = num_trigger_classes
         self._projection = Linear(in_features=encoder.get_output_dim(),
                                   out_features=num_trigger_classes)
 
         self._accuracy = CategoricalAccuracy()
         labels = vocab.get_token_to_index_vocabulary(self._trigger_label_namespace)
+        self._labels = list(labels)
 
         # We have two (slight different) metric sets: char-based and token-based
         # Char-based metrics also capture error propagated by NER.
@@ -50,16 +59,16 @@ class ZSEE(Model):
         #  1. Measure difference as error we have because of NER,
         #  2. Compare with most of the previous work evaluated token-level,
         #  3. As fallback if our tokenization option does not provide token-char mappings.
-        self._prf_char_seqs = PrecisionRecallFScore(labels=list(labels))
-        self._prf_token_seqs = PrecisionRecallFScore(labels=list(labels),
+        self._prf_char_seqs = PrecisionRecallFScore(labels=self._labels)
+        self._prf_token_seqs = PrecisionRecallFScore(labels=self._labels,
                                                      prefix='token_level/')
         self._prf_jmee = SeqEvalPrecisionRecallFScore()
 
         initializer(self)
 
     def _balancing_weights(self,
-                           labels: torch.Tensor,
-                           mask: torch.Tensor = None):
+                           labels: Tensor,
+                           mask: Tensor = None):
         # Build weight-mask for importance weighting
         # in case of imbalanced number of the labels.
 
@@ -76,7 +85,8 @@ class ZSEE(Model):
         mask = mask.float()
 
         # Only 1-D tensors are supported by `bincounts`, we need to flatten them
-        num_label_occurrences = labels.flatten().bincount(mask.flatten())
+        num_label_occurrences = labels.flatten().bincount(mask.flatten(),
+                                                          minlength=self._num_trigger_classes)
         target_weight = mask.sum()
 
         # Clamp the tensor to avoid division-by-zero
@@ -87,9 +97,10 @@ class ZSEE(Model):
 
         return weights / resulted_weight * target_weight
 
+    @overrides
     def forward(self,
                 text: Dict[str, Any],
-                trigger_labels: torch.LongTensor = None,
+                trigger_labels: Tensor = None,
                 **metadata) -> Dict[str, Any]:
         # Output dict to collect forward results
         output_dict: Dict[str, Any] = dict()
@@ -128,6 +139,13 @@ class ZSEE(Model):
         if trigger_labels is None:
             return output_dict
 
+        if trigger_labels.size() != mask.size():
+            # If the `trigger_labels` is longer than `mask` it means we are
+            # dealing with truncated text so we need to truncate labels as well
+            truncated_length = mask.size(1)
+            trigger_labels = trigger_labels[:, :truncated_length].contiguous()
+
+        # TODO toggle balancing
         balancing_weights = self._balancing_weights(trigger_labels,
                                                     mask=mask)
         loss = sequence_cross_entropy_with_logits(tag_logits, trigger_labels,
@@ -165,14 +183,15 @@ class ZSEE(Model):
     class Char2TokenMappingMissing(Exception):
         pass
 
+    @overrides
     def decode(self, output_dict: Dict[str, Any]) -> Dict[str, Any]:
         batch_tokens: List[List[Token]] = output_dict['tokens']
         # Shape: (batch_size, num_tokens, num_trigger_classes)
-        tag_logits: torch.Tensor = output_dict['tag_logits'].detach().cpu().numpy()
+        tag_logits: Tensor = output_dict['tag_logits'].detach().cpu().numpy()
         # Shape: (batch_size, num_tokens)
         batch_pred_tags = tag_logits.argmax(-1)
         # Shape: (batch_size, num_tokens)
-        batch_mask: torch.Tensor = output_dict['mask']
+        batch_mask: Tensor = output_dict['mask']
 
         # First, decode token-based trigger spans.
         batch_pred_trigger_token_seqs = self._decode_trigger_token_seqs(batch_pred_tags,
@@ -208,8 +227,8 @@ class ZSEE(Model):
         return batch_outputs
 
     def _decode_trigger_token_seqs(self,
-                                   batch_pred_tags: torch.Tensor,
-                                   batch_mask: torch.Tensor
+                                   batch_pred_tags: Tensor,
+                                   batch_mask: Tensor
                                    ) -> List[List[Tuple[Tuple[int, int], str]]]:
 
         batch_predicted_triggers: List[List[Tuple[Tuple[int, int], str]]] = []
@@ -284,6 +303,7 @@ class ZSEE(Model):
 
         return batch_predicted_triggers
 
+    @overrides
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         verbose = self._verbose or reset
         # if not reset and not self._verbose:
