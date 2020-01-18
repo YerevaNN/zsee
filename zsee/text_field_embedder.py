@@ -4,6 +4,7 @@ from typing import Dict
 import torch
 from overrides import overrides
 from torch import Tensor
+from torch.nn import Module
 
 from allennlp.common import Params
 from allennlp.models import load_archive
@@ -105,9 +106,11 @@ class MappedTextFieldEmbedder(TextFieldEmbedder):
     def __init__(self,
                  text_field_embedder: TextFieldEmbedder,
                  # frozen_embeddings: bool = True,
-                 mapper: FeedForward = None):
+                 mapper: FeedForward = None,
+                 bias: bool = True):
         super().__init__()
 
+        self._bias = bias
         self._text_field_embedder = text_field_embedder
         self._output_dim = self._text_field_embedder.get_output_dim()
         # self._frozen_embeddings = frozen_embeddings
@@ -118,7 +121,10 @@ class MappedTextFieldEmbedder(TextFieldEmbedder):
         if mapper is not None:
             self._mapper = mapper
         else:
-            self._mapper = BiasOnly(self._output_dim)
+            if bias:
+                self._mapper = BiasOnly(self._output_dim)
+            else:
+                self._mapper = Module()
 
     def get_output_dim(self) -> int:
         return self._output_dim
