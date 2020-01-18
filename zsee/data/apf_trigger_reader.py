@@ -26,9 +26,13 @@ class APFTriggerReader(TriggerReader):
                  tokenizer: Tokenizer,
                  sentence_splitter: SentenceSplitter,
                  trigger_label_namespace: str = 'event_labels',
+                 multi_label: bool = True,
+                 null_label: bool = False,
                  lazy: bool = False) -> None:
         super().__init__(token_indexers=token_indexers,
                          trigger_label_namespace=trigger_label_namespace,
+                         multi_label=multi_label,
+                         null_label=null_label,
                          lazy=lazy)
         self._tokenizer = tokenizer
         self._sentence_splitter = sentence_splitter

@@ -1,8 +1,13 @@
+import logging
 from typing import List, Dict, Tuple, Iterator
+
+from tqdm import tqdm
 
 from allennlp.data import Token, Instance, TokenIndexer, DatasetReader
 
 from .trigger_reader import TriggerReader
+
+logger = logging.getLogger(__name__)
 
 
 @DatasetReader.register('bio_trigger')
@@ -11,10 +16,17 @@ class BIOTriggerReader(TriggerReader):
     def __init__(self,
                  token_indexers: Dict[str, TokenIndexer],
                  trigger_label_namespace: str = 'event_labels',
-                 lazy: bool = False) -> None:
+                 multi_label: bool = True,
+                 null_label: bool = False,
+                 lazy: bool = False,
+                 show_progress: bool = False,
+        self._show_progress = show_progress
         super().__init__(token_indexers,
                          trigger_label_namespace,
-                         lazy)
+                         lazy=lazy,
+                         multi_label=multi_label,
+                         null_label=null_label,
+                         )
 
     def _read_bio_sentences(self, file_path: str) -> Iterator[Tuple[List[str], List[str]]]:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -25,8 +37,8 @@ class BIOTriggerReader(TriggerReader):
                 if not line:
                     if tokens:
                         yield tokens, bio_tags
-                    tokens.clear()
-                    bio_tags.clear()
+                    tokens = []
+                    bio_tags = []
                     continue
 
                 # Here we split the line only with the rightmost whitespace
@@ -64,10 +76,23 @@ class BIOTriggerReader(TriggerReader):
 
         return labels, token_seqs
 
-    def _read(self, file_path: str) -> Iterator[Instance]:
-        for tokens, bio_tags in self._read_bio_sentences(file_path):
+    def _build_instances(self, bio_sentences):
+        for tokens, bio_tags in bio_sentences:
             tokens = [Token(token) for token in tokens]
             trigger_labels, trigger_token_seqs = self._decode_bio_spans(bio_tags)
             yield self._build_instance(tokens,
                                        trigger_labels=trigger_labels,
                                        trigger_token_seqs=trigger_token_seqs)
+
+    def _read(self, file_path: str) -> Iterator[Instance]:
+        logger.info(f'Reading {file_path}...')
+        bio_sentences = self._read_bio_sentences(file_path)
+        if self._show_progress:
+            bio_sentences = tqdm(list(bio_sentences))
+
+        instances = self._build_instances(bio_sentences)
+
+        if self._show_progress:
+            instances = list(instances)
+
+        yield from instances

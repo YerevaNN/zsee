@@ -1,11 +1,10 @@
+from typing import Any, Dict, List, Tuple, Union, Iterable
+
+import torch
+
 from collections import defaultdict, Counter
 
-from torch import Tensor
-
-from allennlp.modules import SimilarityFunction
-from allennlp.training.metrics import Metric, Average
-
-from typing import Any, Dict, List, Tuple, Union
+from allennlp.training.metrics import Metric
 
 ConfusionMatrix = Counter
 
@@ -20,11 +19,13 @@ class PrecisionRecallFScore(Metric):
                  labels: List[str] = None,
                  beta: float = 1,
                  prefix: str = '',
-                 report_labelwise: bool = False) -> None:
+                 report_labelwise: bool = False,
+                 verbose: bool = True) -> None:
         self._labels = labels
         self._beta = beta
         self._prefix = prefix
         self._report_labelwise = report_labelwise
+        self._verbose = verbose
         # Metrics are reported for each label, so we compute statistics
         # for each label separately.
         self._labelwise_confusion_matrices: Dict[str, ConfusionMatrix] = defaultdict(ConfusionMatrix)
@@ -92,7 +93,7 @@ class PrecisionRecallFScore(Metric):
     def _compute_scores(self,
                         confusion_matrix: ConfusionMatrix,
                         prefix: str = 'averaged',
-                        verbose: bool = True):
+                        verbose: bool = False):
         true_positives = confusion_matrix['TP']
         false_positives = confusion_matrix['FP']
         false_negatives = confusion_matrix['FN']
@@ -135,10 +136,13 @@ class PrecisionRecallFScore(Metric):
 
     def get_metric(self,
                    reset: bool,
-                   verbose: bool = True) -> Dict[str, float]:
+                   verbose: bool = None) -> Dict[str, float]:
         """
         Compute and return the metric. Optionally also call :func:`self.reset`.
         """
+
+        if verbose is None:
+            verbose = self._verbose
 
         # If we had no comparisons, report nothing.
         if not self._labelwise_confusion_matrices:
@@ -152,7 +156,7 @@ class PrecisionRecallFScore(Metric):
         scores: Dict[str, Any] = dict()
 
         for label in self._labels:
-            prefix = f'{self._prefix}labelwise/{label}'
+            prefix = f'{self._prefix}_labelwise/{label}'
             label_scores = self._compute_scores(self._labelwise_confusion_matrices[label],
                                                 prefix,
                                                 verbose=verbose)
