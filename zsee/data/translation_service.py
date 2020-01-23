@@ -46,7 +46,7 @@ class TranslationService(Registrable):
 @TranslationService.register('cached')
 class CachedTranslationService(TranslationService):
     def __init__(self,
-                 tokenizer: Tokenizer,
+                 tokenizer: Tokenizer = None,
                  source_lang: str = 'src',
                  target_lang: str = 'tgt',
                  cache_dir: str = 'data/mt'):
@@ -62,10 +62,17 @@ class CachedTranslationService(TranslationService):
         self.translations: Dict[str, str] = defaultdict(str)
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.source_file = self.source_path.open('a+', encoding='utf-8')
-        self.source_file.seek(0)
-        self.target_file = self.target_path.open('a+', encoding='utf-8')
-        self.target_file.seek(0)
+        try:
+            self.source_file = self.source_path.open('a+', encoding='utf-8')
+            self.source_file.seek(0)
+            self.target_file = self.target_path.open('a+', encoding='utf-8')
+            self.target_file.seek(0)
+        except OSError:
+            # Maybe FS is read-only
+            logger.warning('The filesystem is read-only. Reporting missing sentences will fail.')
+            self.source_file = self.source_path.open('r', encoding='utf-8')
+            self.target_file = self.target_path.open('r', encoding='utf-8')
+
 
         for source_snt, target_snt in zip(self.source_file, self.target_file):
             source_snt: str = source_snt.strip('\n')
@@ -115,9 +122,11 @@ class CachedTranslationService(TranslationService):
         return target_snt
 
     def _tokenize(self, sentence: str) -> List[Token]:
+        raise NotImplementedError
         return self.tokenizer.tokenize(sentence)
 
     def _detokenize(self, tokens: List[Token]) -> str:
+        raise NotImplementedError
         tokens_with_whitespaces = [
             getattr(token, 'text_with_ws', f'{token} ')  # use non-destructive tokens
             for token in tokens                          # if available
@@ -126,6 +135,7 @@ class CachedTranslationService(TranslationService):
 
     @overrides
     def _translate_tokens(self, source_tokens: List[Token]) -> List[Token]:
+        raise NotImplementedError
         source_snt = self._detokenize(source_tokens)
         target_snt = self._translate(source_snt)
         target_tokens = self._tokenize(target_snt)
