@@ -27,7 +27,7 @@ class TextHash(TokenIndexer):
         pass
 
     def tokens_to_indices(
-            self, tokens: List[Token], vocabulary: Vocabulary, index_name: str
+            self, tokens: List[Token], vocabulary: Vocabulary
     ) -> Dict[str, List[int]]:
         immutable_tokens = tuple(tokens)
         return {
@@ -35,7 +35,9 @@ class TextHash(TokenIndexer):
         }
 
     def get_padding_lengths(self, token: int) -> Dict[str, int]:
-        return {}
+        return {
+            'hash': 1
+        }
 
     def as_padded_tensor(
             self,
