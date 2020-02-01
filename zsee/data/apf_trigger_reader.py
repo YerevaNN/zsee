@@ -28,12 +28,12 @@ class APFTriggerReader(TriggerReader):
                  trigger_label_namespace: str = 'event_labels',
                  multi_label: bool = True,
                  null_label: bool = False,
-                 lazy: bool = False) -> None:
+                 **kwargs) -> None:
         super().__init__(token_indexers=token_indexers,
                          trigger_label_namespace=trigger_label_namespace,
                          multi_label=multi_label,
                          null_label=null_label,
-                         lazy=lazy)
+                         **kwargs)
         self._tokenizer = tokenizer
         self._sentence_splitter = sentence_splitter
 
@@ -192,7 +192,7 @@ class APFTriggerReader(TriggerReader):
 
         return trigger_annotations
 
-    def _read(self, file_path: str) -> Iterator[Instance]:
+    def _read_instances(self, file_path: str) -> Iterator[Instance]:
         num_docs_read = 0
         num_instances_read = 0
 

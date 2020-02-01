@@ -19,17 +19,17 @@ class BIOTriggerReader(TriggerReader):
                  trigger_label_namespace: str = 'event_labels',
                  multi_label: bool = True,
                  null_label: bool = False,
-                 lazy: bool = False,
                  show_progress: bool = False,
-                 translation_service: TranslationService = None
+                 translation_service: TranslationService = None,
+                 **kwargs
                  ) -> None:
         self._show_progress = show_progress
         super().__init__(token_indexers,
                          trigger_label_namespace,
-                         lazy=lazy,
                          multi_label=multi_label,
                          null_label=null_label,
-                         translation_service=translation_service
+                         translation_service=translation_service,
+                         **kwargs
                          )
 
     def _read_bio_sentences(self, file_path: str) -> Iterator[Tuple[List[str], List[str]]]:
@@ -84,11 +84,13 @@ class BIOTriggerReader(TriggerReader):
         for tokens, bio_tags in bio_sentences:
             tokens = [Token(token) for token in tokens]
             trigger_labels, trigger_token_seqs = self._decode_bio_spans(bio_tags)
-            yield self._build_instance(tokens,
-                                       trigger_labels=trigger_labels,
-                                       trigger_token_seqs=trigger_token_seqs)
+            instance = self._build_instance(tokens,
+                                            trigger_labels=trigger_labels,
+                                            trigger_token_seqs=trigger_token_seqs)
 
-    def _read(self, file_path: str) -> Iterator[Instance]:
+            yield instance
+
+    def _read_instances(self, file_path: str) -> Iterator[Instance]:
         logger.info(f'Reading {file_path}...')
         bio_sentences = self._read_bio_sentences(file_path)
         if self._show_progress:

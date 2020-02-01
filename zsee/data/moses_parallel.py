@@ -15,10 +15,10 @@ class MosesParallel(DatasetReader):
                  token_indexers: Dict[str, TokenIndexer],
                  tokenizer: Tokenizer,
                  limit_samples: int = -1,
-                 lazy: bool = False,
                  source_field: str = 'source_snt',
-                 target_field: str = 'target_snt') -> None:
-        super().__init__(lazy=lazy)
+                 target_field: str = 'target_snt',
+                 **kwargs) -> None:
+        super().__init__(**kwargs)
         self._token_indexers = token_indexers
         self._tokenizer = tokenizer
         self._limit_samples = limit_samples
