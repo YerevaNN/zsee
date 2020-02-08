@@ -1,10 +1,10 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 from overrides import overrides
 
 import numpy as np
 
-from allennlp.common.util import JsonDict, sanitize
+from allennlp.common.util import JsonDict, sanitize, lazy_groups_of
 from allennlp.data import DatasetReader, Instance
 from allennlp.data.tokenizers import SpacyTokenizer
 from allennlp.models import Model
@@ -20,8 +20,8 @@ class TriggerTaggerPredictor(Predictor):
                  sanitize: bool = True) -> None:
         super().__init__(model, dataset_reader)
         self._sanitize = sanitize
-        self._tokenizer = SpacyTokenizer(language=language, pos_tags=True,
-                                         keep_spacy_tokens=True)
+        # self._tokenizer = SpacyTokenizer(language=language, pos_tags=True,
+        #                                  keep_spacy_tokens=True)
 
     @overrides
     def load_line(self, line: str) -> JsonDict:
@@ -30,17 +30,35 @@ class TriggerTaggerPredictor(Predictor):
         }
 
     def predict(self, sentence: str) -> JsonDict:
-        return self.predict_json({"sentence" : sentence})
+        return self.predict_json(self.load_line(sentence))
+
+    def predict_batch(self,
+                      sentences: List[str],
+                      batch_size: int = None) -> List[JsonDict]:
+        if batch_size is None:
+            # If `batch_size` is not given, assume inputs as a one batch
+            return self.predict_batch_json([
+                self.load_line(sentence) for sentence in sentences
+            ])
+
+        outputs = []
+        for batch in lazy_groups_of(sentences, batch_size):
+            outputs += self.predict_batch(batch)
+        return outputs
 
     @overrides
-    def _json_to_instance(self, json_dict: JsonDict) -> Instance:
+    def _json_to_instance(self, json_dict: Union[str, JsonDict]) -> Instance:
         """
         Expects JSON that looks like ``{"sentence": "..."}``.
         Runs the underlying model, and adds the ``"words"`` to the output.
         """
-        sentence = json_dict["sentence"]
-        tokens = self._tokenizer.tokenize(sentence)
-        return self._dataset_reader.text_to_instance(tokens)
+        if isinstance(json_dict, str):
+            sentence = json_dict
+        else:
+            sentence = json_dict["sentence"]
+
+        # tokens = self._tokenizer.tokenize(sentence)
+        return self._dataset_reader.text_to_instance(sentence)
 
     def _decode_wrt_mask(self, tensor, mask):
         return np.stack([
@@ -148,3 +166,17 @@ class TriggerTaggerPredictor(Predictor):
             del hierplane_tree["root"]["children"]
 
         return hierplane_tree
+
+
+@Predictor.register('sentence-trigger')
+class SentenceTriggerPredictor(TriggerTaggerPredictor):
+
+    def __init__(self,
+                 model: Model,
+                 dataset_reader: DatasetReader,
+                 language: str = 'en_core_web_sm',
+                 sanitize: bool = True) -> None:
+        super().__init__(model, dataset_reader, language, sanitize)
+
+    def _process_outputs(self, output_dict):
+        return output_dict
