@@ -1,12 +1,18 @@
-from typing import Type, Union
+import logging
+from abc import ABC
+from typing import Type, Union, Any, Tuple
 
 from overrides import overrides
+
 from torch import Tensor
-from torch.nn import Module, Parameter, init
+from torch.nn import Module, Parameter, init, Linear
 from torch.nn.modules.loss import _WeightedLoss, _Loss
 
 from allennlp.common import FromParams
-from allennlp.modules import Seq2VecEncoder
+from allennlp.modules import Seq2VecEncoder, Seq2SeqEncoder
+from allennlp.nn.util import masked_softmax
+
+logger = logging.getLogger(__name__)
 
 
 class BiasOnly(Module, FromParams):
@@ -46,15 +52,32 @@ class FirstTokenPooler(Seq2VecEncoder):
         return tokens[:, 0]
 
 
-class FocalLoss(Module):
+class ClassBalancedFocalLoss(Module):
 
     def __init__(self,
                  cls: Union[Type[_WeightedLoss], Type[_Loss]],
                  *,
                  gamma: float = 0,
+                 beta: float = None,
                  weight: Tensor = None,
+                 class_statistics: Tensor = None,
                  reduction: str = 'mean'):
         super().__init__()
+
+        if weight is None and class_statistics is not None:
+            logger.info('Calculating class weights from class statistics.')
+            logger.info(f'Inverse-rank weighting will result in {1 / class_statistics}')
+            if beta is None or beta == 1:
+                beta = 1
+                weight: Tensor = 1 / class_statistics
+                logger.info('Inverse-rank weighting is applied.')
+            else:
+                weight: Tensor = (1 - beta) / (1 - beta ** class_statistics)
+                logger.info('Weights are calculated w.r.t. effective number of samples.')
+                logger.info(f'{weight}')
+
+            weight /= weight.mean()
+
         self.loss = cls(weight=weight, reduction='none')
         self.gamma = gamma
         self.reduction = reduction
