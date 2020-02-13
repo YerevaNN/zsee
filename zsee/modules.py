@@ -99,3 +99,59 @@ class ClassBalancedFocalLoss(Module):
             raise NotImplementedError
 
         return loss
+
+
+@Seq2VecEncoder.register('attention')
+class MultiHeadAttentionPooler(Seq2VecEncoder):
+    def __init__(self,
+                 input_dim: int,
+                 output_dim: int = 1,
+                 projection: bool = True
+                 ):
+        super().__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+
+        self.f = Linear(input_dim, output_dim)
+        if projection:
+            self.g = Linear(input_dim, 1)
+        else:
+            assert output_dim == 1
+            self.g = None
+
+    def get_input_dim(self) -> int:
+        return self.input_dim
+
+    def get_output_dim(self) -> int:
+        return self.output_dim
+
+    def forward(
+            self,
+            value: Tensor,
+            mask: Tensor) -> Tensor:
+        # Shape: (batch_size, num_tokens, input_dim)
+        # ->
+        # Either
+        # Shape: (batch_size, input_dim)
+        # Or
+        # Shape: (batch_size, output_dim)
+
+        batch_size, num_tokens, input_dim = value.size()
+
+        # Shape: (batch_size, num_tokens, num_heads)
+        a = self.f(value)
+        # Shape: (batch_size, num_heads, num_tokens)
+        s = masked_softmax(a, mask.unsqueeze(-1), dim=1).transpose(-1, -2)
+
+        # Shape: (batch_size, num_heads, input_dim)
+        weighted_sum = s.bmm(value)
+
+        if self.g is None:
+            # Shape: (batch_size, input_dim)
+            return weighted_sum.squeeze(dim=1)
+
+        # Shape: (batch_size, num_heads, 1)
+        g = self.g(weighted_sum)
+
+        # Shape: (batch_size, num_heads)
+        return g.squeeze(dim=-1)
