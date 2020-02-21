@@ -155,3 +155,79 @@ class MultiHeadAttentionPooler(Seq2VecEncoder):
 
         # Shape: (batch_size, num_heads)
         return g.squeeze(dim=-1)
+
+
+class Normalization(Seq2SeqEncoder, ABC):
+    default_implementation = 'default'
+
+    def __init__(self,
+                 input_dim: int = None):
+        super().__init__()
+        self._input_dim = input_dim
+
+    def get_input_dim(self) -> int:
+        assert self._input_dim is not None
+        return self._input_dim
+
+    def get_output_dim(self) -> int:
+        assert self._input_dim is not None
+        return self._input_dim
+
+
+@Normalization.register('mean')
+class MeanNormalization(Normalization):
+    def __init__(self,
+                 dims: Tuple[int] = (0, 1),
+                 **kwargs):
+        super().__init__(**kwargs)
+        self._dims = dims
+
+    def forward(self,
+                tensor: Tensor,
+                mask: Tensor) -> Tensor:
+        # TODO Optional mask
+        clean_tensor = tensor * mask
+        total = clean_tensor.sum(dim=self._dims, keepdim=True)
+        num_elements = mask.sum(dim=self._dims, keepdim=True)
+        mean = total / num_elements
+        masked_centered = (clean_tensor - mean) * mask
+        return masked_centered
+
+
+@Normalization.register('default')
+@Normalization.register('mean-std')
+class MeanStdNormalization(Normalization):
+    def __init__(self,
+                 dims: Tuple[int] = (0, 1),
+                 eps: float = 1e-6,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self._dims = dims
+        self._eps = eps
+
+    def forward(self,
+                tensor: Tensor,
+                mask: Tensor) -> Tensor:
+        # TODO Optional mask
+
+        # Shape: (batch_size, seq_length, num_channels)
+
+        # Shape: (batch_size, seq_length, num_channels)
+        clean_tensor = tensor * mask
+        # Shape: (1, 1, num_channels)
+        total = clean_tensor.sum(dim=self._dims, keepdim=True)
+        # Shape: (1, 1, num_channels)
+        num_elements = mask.sum(dim=self._dims, keepdim=True)
+        # Shape: (1, 1, num_channels)
+        mean = total / num_elements
+        # Shape: (batch_size, seq_length, num_channels)
+        masked_centered = (clean_tensor - mean) * mask
+        # return masked_centered
+        # std = torch.sqrt((masked_centered * masked_centered).sum() / num_elements + self.eps)
+        # return self.gamma * (tensor - mean) / (std + self.eps) + self.beta
+
+        # Shape: (1, 1, num_channels)
+        var = (masked_centered * masked_centered).sum(dim=self._dims) / num_elements
+        std = var.sqrt()
+
+        return masked_centered / (std + self._eps)
