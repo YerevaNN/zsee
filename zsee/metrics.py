@@ -1,9 +1,12 @@
-from typing import Any, Dict, List, Tuple, Union, Iterable
+from typing import Any, Dict, List, Tuple, Union, Iterable, Optional
 
 import torch
 
 from collections import defaultdict, Counter
 
+from overrides import overrides
+
+from allennlp.data import Token
 from allennlp.training.metrics import Metric
 
 ConfusionMatrix = Counter
@@ -13,6 +16,68 @@ LabellingsList = List[Tuple[Any, str]]
 Labellings = Union[LabellingsDict, LabellingsList]
 
 
+@Metric.register('report_samplewise')
+class ReportSamplewise(Metric):
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lines = []
+
+    def _report_line(self, line: str):
+        self.lines.append(line)
+
+    def sample_to_line(self,
+                       sample_pred,
+                       sample_true,
+                       sample_metadata):
+        raise NotImplementedError
+
+    @overrides
+    def __call__(self,
+                 predictions: List[Any],
+                 gold_labels: List[Any],
+                 metadata: List[Any],
+                 **kwargs):
+        for sample_pred, sample_true, sample_metadata in zip(predictions,
+                                                             gold_labels,
+                                                             metadata):
+            line = self.sample_to_line(sample_pred, sample_true, sample_metadata)
+            self._report_line(line)
+
+    @overrides
+    def get_metric(self, reset: bool):
+        metric = {
+            'type': 'blob',
+            'dump': False,
+            'lines': self.lines
+        }
+
+        if reset:
+            self.reset()
+
+        return metric
+
+    @overrides
+    def reset(self) -> None:
+        self.lines = []
+
+
+class ReportSamplewiseTextClassification(ReportSamplewise):
+
+    def sample_to_line(self,
+                       sample_pred: List[int],
+                       sample_true: List[int],
+                       sample_metadata: List[Token]):
+        snt = ' '.join(str(tok) for tok in sample_metadata).replace('\t', '_TAB_')
+
+        cells = []
+        cells += ('+' if flag else '.' for flag in sample_pred)
+        cells += ('+' if flag else '.' for flag in sample_true)
+        cells.append(snt)
+
+        return '\t'.join(cells)
+
+
 @Metric.register('precision_recall_fscore')
 class PrecisionRecallFScore(Metric):
     def __init__(self,
@@ -20,7 +85,8 @@ class PrecisionRecallFScore(Metric):
                  beta: float = 1,
                  prefix: str = '',
                  report_labelwise: bool = False,
-                 verbose: bool = True) -> None:
+                 verbose: bool = True,
+                 samplewise_statistics: bool = False) -> None:
         self._labels = labels
         self._beta = beta
         self._prefix = prefix
@@ -30,12 +96,22 @@ class PrecisionRecallFScore(Metric):
         # for each label separately.
         self._labelwise_confusion_matrices: Dict[str, ConfusionMatrix] = defaultdict(ConfusionMatrix)
 
+        if samplewise_statistics:
+            self._samplewise_statistics: Dict[str, Dict[str, ConfusionMatrix]] = dict()
+        else:
+            self._samplewise_statistics = None
+
     def __call__(self,
                  batch_predictions: List[Labellings],
                  batch_gold_labels: List[Labellings],
+                 batch_metadata: List[Any] = None,
                  **kwargs):
-        for predictions, gold_labels in zip(batch_predictions,
-                                            batch_gold_labels):
+        if batch_metadata is None:
+            batch_metadata = [None for _ in batch_gold_labels]
+
+        for predictions, gold_labels, metadata in zip(batch_predictions,
+                                                      batch_gold_labels,
+                                                      batch_metadata):
             # In case of dicts, convert them into compatible lists.
             if isinstance(predictions, dict):
                 predictions = list(predictions.items())
@@ -47,6 +123,11 @@ class PrecisionRecallFScore(Metric):
             for label in self._labels:
                 label_confusion_matrix = labelwise_confusion_matrices[label]
                 self._labelwise_confusion_matrices[label] += label_confusion_matrix
+
+            if self._samplewise_statistics is None:
+                continue
+
+            self._samplewise_statistics = labelwise_confusion_matrices
 
     def _compare_sample(self,
                         predictions: LabellingsList,
@@ -224,3 +305,54 @@ class MultiClassConfusionMatrix(Metric):
     def reset(self) -> None:
         self._confusion_matrix.zero_()
 
+#
+# @Metric.register('multilabel_precision_recall_fscore')
+# class MultilabelPrecisionRecallFScore(Metric):
+#
+#     def __init__(self,
+#                  labels: List[str] = None,
+#                  beta: float = 1,
+#                  prefix: str = '',
+#                  report_labelwise: bool = False,
+#                  average: str = 'micro') -> None:
+#         if report_labelwise:
+#             raise NotImplementedError
+#         self._labels = labels
+#         self._beta = beta
+#         self._prefix = prefix
+#         self._average = average
+#
+#         self._predictions: List[Tensor] = []
+#         self._targets: List[Tensor] = []
+#
+#     def __call__(self,
+#                  predictions: Tensor,
+#                  gold_labels: Tensor,
+#                  **kwargs):
+#         self._predictions.extend(predictions)
+#         self._targets.extend(gold_labels)
+#
+#     def get_metric(self, reset: bool) -> Dict[str, float]:
+#         # if not reset:
+#         #     return dict()
+#
+#         metrics = precision_recall_fscore_support(y_true=self._targets,
+#                                                   y_pred=self._predictions,
+#                                                   beta=self._beta,
+#                                                   labels=self._labels,
+#                                                   average=self._average,
+#                                                   zero_division=0)
+#         precision, recall, fscore, _ = metrics
+#
+#         if reset:
+#             self.reset()
+#
+#         return {
+#             f'{self._prefix}averaged_precision': precision,
+#             f'{self._prefix}averaged_recall': recall,
+#             f'{self._prefix}averaged_f{self._beta}': fscore
+#         }
+#
+#     def reset(self) -> None:
+#         self._predictions = []
+#         self._targets = []
