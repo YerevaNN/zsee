@@ -9,9 +9,9 @@ from torch.nn import Module
 from allennlp.common import Params
 from allennlp.models import load_archive
 from allennlp.modules import TextFieldEmbedder, FeedForward
+from allennlp.nn.util import get_text_field_mask
 
-
-from .modules import BiasOnly
+from .modules import BiasOnly, Normalization
 
 
 @TextFieldEmbedder.register('pretrained')
@@ -107,12 +107,21 @@ class MappedTextFieldEmbedder(TextFieldEmbedder):
                  text_field_embedder: TextFieldEmbedder,
                  # frozen_embeddings: bool = True,
                  mapper: FeedForward = None,
-                 bias: bool = True):
+                 bias: bool = True,
+                 pre_normalization: Normalization = None,
+                 post_normalization: Normalization = None,
+                 normalization: Normalization = None):
         super().__init__()
 
         self._bias = bias
         self._text_field_embedder = text_field_embedder
         self._output_dim = self._text_field_embedder.get_output_dim()
+
+        if normalization is not None:
+            pre_normalization = normalization
+        self._pre_normalization = pre_normalization
+        self._post_normalization = post_normalization
+
         # self._frozen_embeddings = frozen_embeddings
         # if self._frozen_embeddings:
         #     self._text_field_embedder.requires_grad_(False)
@@ -130,7 +139,7 @@ class MappedTextFieldEmbedder(TextFieldEmbedder):
         return self._output_dim
 
     def forward(self,
-                text_field_input: Dict[str, Tensor],
+                text_field_input: Dict[str, Dict[str, Tensor]],
                 mapped: bool = True,
                 both: bool = False,
                 **kwargs) -> Tensor:
@@ -141,12 +150,25 @@ class MappedTextFieldEmbedder(TextFieldEmbedder):
         # Shape: (batch_size, num_tokens, embedding_dim)
         embeddings = self._text_field_embedder.forward(text_field_input, **kwargs)
 
+        mask = get_text_field_mask(text_field_input)
+        if mask.size(1) != embeddings.size(1):
+            mask = (text_field_input['bert']['input_ids'] != 0).long()
+        mask = mask.unsqueeze(-1).float()
+
+        # TODO find mask, make the code generic and shared
+
+        if self._pre_normalization:
+            embeddings = self._pre_normalization(embeddings, mask=mask)
+        # if self._pre_normalization is None:
         if not mapped:
             return embeddings
 
         # Shape: (batch_size, num_tokens, embedding_dim)
         mapped_embeddings = self._mapper(embeddings)
 
+        if self._post_normalization:
+            mapped_embeddings = self._post_normalization(mapped_embeddings, mask=mask)
+        # if self._post_normalization is None:
         if not both:
             return mapped_embeddings
 
