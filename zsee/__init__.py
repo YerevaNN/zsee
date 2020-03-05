@@ -7,6 +7,7 @@ from . import text_field_embedder
 from .text_field_embedder import PretrainedModelTextFieldEmbedder
 from .text_field_embedder import MappedTextFieldEmbedder
 from .bert_token_embedder import PretrainedBertOnlyEmbedder
+from .frozen_bert import FrozenBertEmbedder
 
 from .model import ZSEE
 from .alignment_model import AlignmentModel
