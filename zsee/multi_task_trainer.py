@@ -16,7 +16,7 @@ from allennlp.training import CallbackTrainer, TrainerBase
 from allennlp.training.callbacks import Callback
 from allennlp.training.optimizers import Optimizer
 
-from .data.configuration import DataConfigurationBase
+from allennlp.training.data_configuration import DataConfigurationBase
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
