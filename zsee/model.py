@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, Any, Tuple, List, Union, Iterable
 
 from overrides import overrides
@@ -16,8 +17,10 @@ from allennlp.training.metrics import CategoricalAccuracy
 from torch.nn import Dropout, Linear, CrossEntropyLoss, BCEWithLogitsLoss
 
 from .jmee.metrics import SeqEvalPrecisionRecallFScore
-from .metrics import PrecisionRecallFScore, MultiClassConfusionMatrix
-from .modules import FocalLoss
+from .metrics import PrecisionRecallFScore, MultiClassConfusionMatrix, ReportSamplewiseTextClassification
+from .modules import ClassBalancedFocalLoss
+
+logger = logging.getLogger(__name__)
 
 
 @Model.register('zsee')
@@ -28,11 +31,12 @@ class ZSEE(Model):
                  text_field_embedder: TextFieldEmbedder,
                  encoder: Seq2SeqEncoder,
                  *,
+                 projection: bool = True,
                  embeddings_dropout: float = 0,
                  dropout: float = 0,
                  verbose: Union[bool, Iterable[str]] = False,
                  report_labelwise: bool = False,
-                 balance: bool = False,
+                 balance: bool = None,
                  normalize: str = None,
                  trigger_label_namespace: str = 'event_labels',
                  initializer: InitializerApplicator = InitializerApplicator()) -> None:
@@ -51,8 +55,11 @@ class ZSEE(Model):
 
         num_trigger_classes = vocab.get_vocab_size(trigger_label_namespace)
         self._num_trigger_classes = num_trigger_classes
-        self._projection = Linear(in_features=encoder.get_output_dim(),
-                                  out_features=num_trigger_classes)
+        if projection:
+            self._projection = Linear(in_features=encoder.get_output_dim(),
+                                      out_features=num_trigger_classes)
+        else:
+            self._projection = None
 
         self._accuracy = CategoricalAccuracy()
         labels = vocab.get_token_to_index_vocabulary(self._trigger_label_namespace)
@@ -341,50 +348,52 @@ class SentenceLevelZSEE(ZSEE):
     def __init__(self,
                  vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
-                 encoder: FeedForward,
+                 encoder: Seq2SeqEncoder,
                  pooler: Seq2VecEncoder,
                  *,
-                 embeddings_dropout: float = 0,
-                 dropout: float = 0,
-                 verbose: Union[bool, Iterable[str]] = False,
-                 report_labelwise: bool = False,
-                 balance: bool = False,
-                 normalize: str = None,
-                 trigger_label_namespace: str = 'event_labels',
                  logits_threshold: float = 0,
                  softmax: bool = False,
                  gamma: float = 0,
-                 initializer: InitializerApplicator = InitializerApplicator()) -> None:
+                 beta: float = 0,
+                 initializer: InitializerApplicator = InitializerApplicator(),
+                 **kwargs) -> None:
         super().__init__(vocab,
                          text_field_embedder=text_field_embedder,
                          encoder=encoder,
-                         embeddings_dropout=embeddings_dropout,
-                         dropout=dropout,
-                         verbose=verbose,
-                         report_labelwise=report_labelwise,
-                         balance=balance,
-                         normalize=normalize,
-                         trigger_label_namespace=trigger_label_namespace)
+                         **kwargs)
+
+        if self._balance:
+            logger.warning('The `balance` flag is deprecated.')
+            if beta == 0:
+                logger.warning('Consider manually setting `beta` to a nonzero value.')
+                logger.warning('Changing `beta` to 1 for backward-compatibility.')
+                beta = 1
+
         self._pooler = pooler
         self._logits_threshold = logits_threshold
         self._softmax = softmax
 
-        loss_weight = torch.ones(self._num_trigger_classes)
-        if vocab._retained_counter and balance:
-            label_counter = vocab._retained_counter[trigger_label_namespace]
+        class_statistics = torch.ones(self._num_trigger_classes)
+        vocab_counter: Dict[str, Dict[str, int]] = getattr(vocab, "_retained_counter", {})
+        label_counter = vocab_counter.get(self._trigger_label_namespace)
+        if label_counter is not None:
             for label, rank in label_counter.items():
                 idx = vocab.get_token_index(label, namespace=self._trigger_label_namespace)
-                loss_weight[idx] = 1 / rank
-            loss_weight /= loss_weight.mean()
+                class_statistics[idx] = rank
+            logger.info(f'Class statistics: {class_statistics}')
+        else:
+            logger.info('The vocab counter is not retained.')
 
         if softmax:
-            self._loss = FocalLoss(CrossEntropyLoss,
-                                   gamma=gamma,
-                                   weight=loss_weight)
+            self._loss = ClassBalancedFocalLoss(CrossEntropyLoss,
+                                                gamma=gamma,
+                                                beta=beta,
+                                                class_statistics=class_statistics)
         else:
-            self._loss = FocalLoss(BCEWithLogitsLoss,
-                                   gamma=gamma,
-                                   weight=loss_weight[..., 1:])
+            self._loss = ClassBalancedFocalLoss(BCEWithLogitsLoss,
+                                                gamma=gamma,
+                                                beta=beta,
+                                                class_statistics=class_statistics[..., 1:])
 
         self._prf = PrecisionRecallFScore(labels=self._labels,
                                           prefix='',
@@ -392,6 +401,8 @@ class SentenceLevelZSEE(ZSEE):
                                           report_labelwise=self._report_labelwise)
         self._confusion_matrix = MultiClassConfusionMatrix(labels=self._labels,
                                                            prefix='_figures/')
+
+        self._samplewise = ReportSamplewiseTextClassification()
 
         initializer(self)
 
@@ -404,7 +415,7 @@ class SentenceLevelZSEE(ZSEE):
         output_dict: Dict[str, Any] = dict()
 
         # The raw tokens are stored for decoding
-        output_dict.update(metadata)
+        # output_dict.update(metadata)
 
         # Shape: (batch_size, num_tokens, embedding_dim)
         contextual_embeddings = self._text_field_embedder(text)
@@ -414,28 +425,42 @@ class SentenceLevelZSEE(ZSEE):
         # output_dict['mask'] = mask
 
         if mask.size(1) != contextual_embeddings.size(1):
-            mask = (text['bert'] != 0).long()
+            mask = (text['bert']['input_ids'] != 0).long()
 
-        # Shape: (batch_size, embedding_dim)
-        sentence_embeddings = self._pooler(contextual_embeddings, mask=mask)
+        output_dict['mask'] = mask
+        #
+        # # Shape: (batch_size, embedding_dim)
+        # sentence_embeddings = self._pooler(contextual_embeddings, mask=mask)
 
         # Apply normalization layer if needed
         if self._normalize:
             raise NotImplementedError
 
-        # output_dict['contextual_embeddings'] = contextual_embeddings
+        output_dict['contextual_embeddings'] = contextual_embeddings
         # output_dict['sentence_embeddings'] = sentence_embeddings
 
         # Shape: (batch_size, embedding_dim)
-        sentence_embeddings = self._embeddings_dropout(sentence_embeddings)
+        sentence_embeddings = self._embeddings_dropout(contextual_embeddings)
 
-        # Shape: (batch_size, encoder_dim)
-        hidden = self._encoder(sentence_embeddings)
+        if self._encoder is not None:
+            # Shape: (batch_size, encoder_dim)
+            hidden = self._encoder(sentence_embeddings)
+        else:
+            hidden = sentence_embeddings
         # output_dict['encoder_embeddings'] = hidden
+        output_dict['encoded_embeddings'] = hidden
         hidden = self._dropout(hidden)
 
+        # Shape: (batch_size, embedding_dim)
+        hidden = self._pooler(hidden, mask=mask)
+        output_dict['pooled_embeddings'] = hidden
+
         # Shape: (batch_size, num_trigger_classes)
-        logits = self._projection(hidden)
+        if self._projection is not None:
+            logits = self._projection(hidden)
+        else:
+            assert hidden.size(-1) == self._num_trigger_classes
+            logits = hidden
         output_dict['logits'] = logits
 
         if sentence_trigger_labels is None:
@@ -480,6 +505,10 @@ class SentenceLevelZSEE(ZSEE):
             for sample_labels
             in sentence_trigger_labels.tolist()
         ])
+
+        self._samplewise(predicted_labels_boolean.tolist(),
+                         sentence_trigger_labels.tolist(),
+                         metadata['tokens'])
 
         return output_dict
 
@@ -538,9 +567,12 @@ class SentenceLevelZSEE(ZSEE):
         prf = self._prf.get_metric(reset)
         cm = self._confusion_matrix.get_metric(reset)
 
+        samplewise = self._samplewise.get_metric(reset)
+
         scores = {
             **prf,
-            **cm
+            **cm,
+            '_samplewise': samplewise
         }
 
         return scores
