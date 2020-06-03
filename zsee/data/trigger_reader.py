@@ -3,7 +3,7 @@ import logging
 import pickle
 
 from abc import ABC
-from typing import List, Dict, Tuple, Union, Iterable, cast
+from typing import List, Dict, Tuple, Union, Iterable, cast, Any, IO, Optional
 
 from overrides import overrides
 
@@ -14,6 +14,39 @@ from spacy.tokens import Token as SpacyToken
 from .translation_service import TranslationService
 
 logger = logging.getLogger(__name__)
+
+
+class DatasetReaderPickler(pickle.Pickler):
+
+    def __init__(self,
+                 *args,
+                 lookup_table: Dict[Any, Any],
+                 **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._lookup_table = lookup_table
+
+    def persistent_id(self, obj: Any) -> Any:
+        for key, value in self._lookup_table.items():
+            if obj == value:
+                return "_persistent_id_", key
+        return None
+
+
+class DatasetReaderUnpickler(pickle.Unpickler):
+
+    def __init__(self,
+                 *args,
+                 lookup_table: Dict[Any, Any],
+                 **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._lookup_table = lookup_table
+
+    def persistent_load(self, pid: Any) -> Any:
+        type_tag, key = pid
+        if type_tag == "_persistent_id_":
+            return self._lookup_table[key]
+        else:
+            raise pickle.UnpicklingError("unsupported persistent object")
 
 
 class TriggerReader(DatasetReader, ABC):
@@ -153,15 +186,25 @@ class TriggerReader(DatasetReader, ABC):
         else:
             return self.tokens_to_instance(text)
 
+    # TODO Make use of custom Picklers with persistent_id
+
+    def pickle_lookup_table(self):
+        return {
+            'token_indexers': self._token_indexers
+        }
+
     @overrides
     def _instances_from_cache_file(self, cache_filename: str) -> Iterable[Instance]:
         with open(cache_filename, 'rb') as f:
-            return pickle.load(f)
+            unpickler = DatasetReaderUnpickler(f, lookup_table=self.pickle_lookup_table())
+            return unpickler.load()
 
     @overrides
     def _instances_to_cache_file(self, cache_filename, instances) -> None:
         with open(cache_filename, 'wb') as f:
-            pickle.dump(instances, f, protocol=pickle.HIGHEST_PROTOCOL)
+            pickler = DatasetReaderPickler(f, protocol=pickle.HIGHEST_PROTOCOL,
+                                           lookup_table=self.pickle_lookup_table())
+            pickler.dump(instances)
 
     def _tokenize(self, sentence: str) -> List[Token]:
         return self._tokenizer.tokenize(sentence)
