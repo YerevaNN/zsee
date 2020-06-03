@@ -180,3 +180,13 @@ class SentenceTriggerPredictor(TriggerTaggerPredictor):
 
     def _process_outputs(self, output_dict):
         return output_dict
+
+@Predictor.register('sentence-trigger-tsv')
+class TSVSentenceTriggerPredictor(SentenceTriggerPredictor):
+
+    def dump_line(self, output_dict: JsonDict) -> str:
+        labels = output_dict['predicted_labels_boolean']
+        labels = ['+' if label else '.'
+                  for label in labels]
+        row = '\t'.join(labels)
+        return row + "\n"
