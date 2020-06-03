@@ -6,3 +6,4 @@ tqdm
 overrides
 allennlp>=0.8.5
 BeautifulSoup
+nltk
