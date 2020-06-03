@@ -8,7 +8,7 @@ from torch import Tensor
 from torch.nn import Module, Parameter, init, Linear
 from torch.nn.modules.loss import _WeightedLoss, _Loss
 
-from allennlp.common import FromParams
+from allennlp.common import FromParams, Registrable
 from allennlp.modules import Seq2VecEncoder, Seq2SeqEncoder
 from allennlp.nn.util import masked_softmax
 
@@ -104,17 +104,20 @@ class ClassBalancedFocalLoss(Module):
 @Seq2VecEncoder.register('attention')
 class MultiHeadAttentionPooler(Seq2VecEncoder):
     def __init__(self,
-                 input_dim: int,
+                 input_dim: int = None,
+                 embedding_dim: int = None,
                  output_dim: int = 1,
-                 projection: bool = True
+                 projection: bool = True,
                  ):
         super().__init__()
+        if input_dim is None:
+            input_dim = embedding_dim
         self.input_dim = input_dim
         self.output_dim = output_dim
 
-        self.f = Linear(input_dim, output_dim)
+        self.f = Linear(embedding_dim, output_dim)
         if projection:
-            self.g = Linear(input_dim, 1)
+            self.g = Linear(embedding_dim, 1)
         else:
             assert output_dim == 1
             self.g = None
@@ -231,3 +234,9 @@ class MeanStdNormalization(Normalization):
         std = var.sqrt()
 
         return masked_centered / (std + self._eps)
+
+
+class SimilarityFunction(Module, Registrable):
+
+    def forward(self, tensor_1: Tensor, tensor_2: Tensor) -> Tensor:
+        raise NotImplementedError

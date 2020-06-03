@@ -5,12 +5,15 @@ from overrides import overrides
 import torch
 from torch import Tensor
 
+from allennlp.common import Lazy
 from allennlp.data import Vocabulary, DataArray
 from allennlp.models import Model
-from allennlp.modules import TextFieldEmbedder, SimilarityFunction, Seq2VecEncoder, TimeDistributed
+from allennlp.modules import TextFieldEmbedder, Seq2VecEncoder, TimeDistributed
 from allennlp.nn import InitializerApplicator
 from allennlp.nn.util import get_text_field_mask
 from allennlp.training.metrics import Metric, Average
+
+from zsee.modules import SimilarityFunction
 
 
 @SimilarityFunction.register('mse')
@@ -95,7 +98,7 @@ class AlignmentMetric(Metric):
         self.num_total = 0
 
 
-@Model.register('embeddings_alignment')
+@Model.register('embeddings_alignment', 'from_partial_objects')
 class AlignmentModel(Model):
     def __init__(self,
                  vocab: Vocabulary,
@@ -104,32 +107,22 @@ class AlignmentModel(Model):
                  pooler: Seq2VecEncoder = None,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  map_both: bool = False,
-                 models: List[Model] = None,
                  triplet_loss_margin: float = None,
                  version: int = 1,
                  verbose: bool = False,
                  symmetric: bool = False) -> None:
         super().__init__(vocab)
 
-        # This is hack to share
-        if text_field_embedder is None:
-            for model in models:
-                text_field_embedder = getattr(model, '_text_field_embedder', text_field_embedder)
-            assert text_field_embedder is not None
-        if pooler is None:
-            for model in models:
-                pooler = getattr(model, '_pooler', pooler)
-            assert pooler
-
+        self._distance = distance
         self._text_field_embedder = text_field_embedder
         self._pooler = pooler
-        self._distance = distance
-        self._alignment_accuracy = AlignmentMetric(distance)
         self._map_both = map_both
         self._triplet_loss_margin = triplet_loss_margin
-        self._verbose = verbose
         self._version = version
+        self._verbose = verbose
         self._symmetric = symmetric
+
+        self._alignment_accuracy = AlignmentMetric(distance)
 
         self._num_samples_seen = 0
         self._average_distance = Average()
@@ -142,6 +135,62 @@ class AlignmentModel(Model):
 
         initializer(self)
 
+    @classmethod
+    def resolve(cls,
+                key: str,
+                models: List[Model]
+                ):
+        for model in models:
+            value = getattr(model, '_text_field_embedder', None)
+            if value is not None:
+                return value
+
+        raise ValueError(f'Could not resolve `{key}` in the models {models}')
+
+    @classmethod
+    def from_partial_objects(
+            cls,
+            vocab: Vocabulary,
+            distance: SimilarityFunction,
+            text_field_embedder: TextFieldEmbedder = None,
+            pooler: Lazy[Seq2VecEncoder] = None,
+            initializer: InitializerApplicator = InitializerApplicator(),
+            map_both: bool = False,
+            models: List[Model] = None,
+            triplet_loss_margin: float = None,
+            version: int = 1,
+            verbose: bool = False,
+            symmetric: bool = False
+    ):
+        if models is None:
+            models: List[Model] = []
+        # This is hack to share
+        if text_field_embedder is None:
+            text_field_embedder: TextFieldEmbedder = cls.resolve('_text_field_embedder', models)
+            # for model in models:
+            #     text_field_embedder = getattr(model, '_text_field_embedder', text_field_embedder)
+            # assert text_field_embedder is not None
+        embedding_dim = text_field_embedder.get_output_dim()
+
+        pooler_ = pooler.construct(embedding_dim=embedding_dim)
+        if pooler_ is None:
+            pooler_: Seq2VecEncoder = cls.resolve('_pooler', models)
+            # for model in models:
+            #     pooler = getattr(model, '_pooler', pooler)
+            # pooler_ = pooler.construct(embedding_dim=embedding_dim)
+            # assert pooler_
+
+        return cls(vocab=vocab,
+                   distance=distance,
+                   text_field_embedder=text_field_embedder,
+                   pooler=pooler_,
+                   initializer=initializer,
+                   map_both=map_both,
+                   triplet_loss_margin=triplet_loss_margin,
+                   version=version,
+                   verbose=verbose,
+                   symmetric=symmetric)
+
     def forward_text(self,
                      text: Dict[str, DataArray],
                      mapped: bool = True):
@@ -152,7 +201,8 @@ class AlignmentModel(Model):
         mapped_token_embeddings = self._text_field_embedder(text, mapped=mapped)
 
         if mask.size(1) != mapped_token_embeddings.size(1):
-            mask = (text['bert']['input_ids'] != 0).long()
+            # mask = (text['bert']['input_ids'] != 0).long()
+            mask = text['pretrained_transformer']['wordpiece_mask'].long()
 
         # # Shape: (batch_size, embedding_dim)
         # source_embeddings: Tensor = self._pooler(source_token_embeddings,
@@ -222,7 +272,7 @@ class AlignmentModel(Model):
         # Shape: (batch_size, batch_size)
         pairwise_distances: Tensor = self._distance(source_embeddings.unsqueeze(0),
                                                     target_embeddings.unsqueeze(1))
-        # Shape: (batch_size)
+        # # Shape: (batch_size)
         # random_pair_distances = pairwise_distances[torch.arange(batch_size),
         #                                            torch.randperm(batch_size)]
         # Shape: (batch_size, batch_size)
@@ -232,6 +282,10 @@ class AlignmentModel(Model):
         target_pairwise_distances = self._distance(source_embeddings.unsqueeze(0),
                                                    source_embeddings.unsqueeze(1))
 
+        # positive_loss: Tensor = distance.mean()
+        # output_dict['positive_loss'] = positive_loss
+        # self._alignments_positive_loss(positive_loss.item())
+
         if self._version < 2:
             raise NotImplementedError
 
@@ -239,6 +293,31 @@ class AlignmentModel(Model):
         if self._symmetric:
             loss += self.alignment_loss_v2(pairwise_distances.t())
         output_dict['loss'] = loss
+
+        # if self._triplet_loss_margin is None:
+        #     # pairwise_distances = pairwise_distances.clone()
+        #     inf = pairwise_distances.max().item()
+        #     pairwise_distances_masked = pairwise_distances.clone().fill_diagonal_(inf)
+        #
+        #     false_candidates, false_candidate_indices = pairwise_distances_masked.min(-1)
+        #     negative_loss = false_candidates.mean()
+        #     output_dict['negative_loss'] = negative_loss
+        #     self._alignments_negative_loss(negative_loss.item())
+        #
+        #     # Shape: ()
+        #     output_dict['loss'] = positive_loss - negative_loss
+        # else:
+        #     if self._version > 1:
+        #         negative_loss = self.alignment_negative_loss_v2(pairwise_distances)
+        #     else:
+        #         negative_loss: Tensor = random_pair_distances.mean()
+        #         output_dict['negative_loss'] = negative_loss
+        #         self._alignments_negative_loss(negative_loss.item())
+        #
+        #         if self._triplet_loss_margin >= 0:
+        #             output_dict['loss'] = (positive_loss - negative_loss + self._triplet_loss_margin).clamp(min=0)
+        #         else:
+        #             output_dict['loss'] = positive_loss - negative_loss / batch_size
 
         with torch.no_grad():
             self._num_samples_seen += 1

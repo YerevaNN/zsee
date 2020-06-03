@@ -1,17 +1,21 @@
 from collections import OrderedDict
 from typing import Dict
 
+import logging
 import torch
 from overrides import overrides
 from torch import Tensor
 from torch.nn import Module
 
-from allennlp.common import Params
+from allennlp.common import Params, Lazy
 from allennlp.models import load_archive
 from allennlp.modules import TextFieldEmbedder, FeedForward
 from allennlp.nn.util import get_text_field_mask
 
 from .modules import BiasOnly, Normalization
+
+
+logger = logging.getLogger(__name__)
 
 
 @TextFieldEmbedder.register('pretrained')
@@ -100,7 +104,7 @@ class PretrainedModelTextFieldEmbedder(TextFieldEmbedder):
         return cls(archive_file, weights_file, frozen, key)
 
 
-@TextFieldEmbedder.register('mapped')
+@TextFieldEmbedder.register('mapped', 'from_partial_objects')
 class MappedTextFieldEmbedder(TextFieldEmbedder):
 
     def __init__(self,
@@ -129,11 +133,33 @@ class MappedTextFieldEmbedder(TextFieldEmbedder):
         # TODO Make sure mapper supports time-distributed out-of-the-box.
         if mapper is not None:
             self._mapper = mapper
+            self._output_dim = mapper.get_output_dim()
         else:
             if bias:
                 self._mapper = BiasOnly(self._output_dim)
             else:
                 self._mapper = Module()
+
+    @classmethod
+    def from_partial_objects(
+            cls,
+            text_field_embedder: TextFieldEmbedder,
+            mapper: Lazy[FeedForward] = None,
+            bias: bool = True,
+            pre_normalization: Normalization = None,
+            post_normalization: Normalization = None,
+            normalization: Normalization = None
+    ):
+        text_field_embedder_dim = text_field_embedder.get_output_dim()
+        logger.info(f"Original text field embedder dim: {text_field_embedder_dim}")
+        mapper_ = mapper.construct(input_dim=text_field_embedder_dim)
+
+        return cls(text_field_embedder=text_field_embedder,
+                   mapper=mapper_,
+                   bias=bias,
+                   pre_normalization=pre_normalization,
+                   post_normalization=post_normalization,
+                   normalization=normalization)
 
     def get_output_dim(self) -> int:
         return self._output_dim
@@ -152,7 +178,7 @@ class MappedTextFieldEmbedder(TextFieldEmbedder):
 
         mask = get_text_field_mask(text_field_input)
         if mask.size(1) != embeddings.size(1):
-            mask = (text_field_input['bert']['input_ids'] != 0).long()
+            mask = text_field_input['pretrained_transformer']['wordpiece_mask'].long()
         mask = mask.unsqueeze(-1).float()
 
         # TODO find mask, make the code generic and shared

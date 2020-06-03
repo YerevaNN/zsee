@@ -102,6 +102,3 @@ class BIOTriggerReader(TriggerReader):
             instances = list(instances)
 
         yield from instances
-
-        if self._translation_service:
-            self._translation_service.close()

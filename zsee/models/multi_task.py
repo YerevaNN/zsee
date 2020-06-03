@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Callable
 import torch
 from overrides import overrides
 
-from allennlp.common import Params
+from allennlp.common import Params, Lazy
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.training.metrics import Average

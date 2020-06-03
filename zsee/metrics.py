@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Tuple, Union, Iterable, Optional
+from typing import Any, Dict, List, Tuple, Union, Iterable
 
 import torch
 
@@ -34,10 +34,13 @@ class ReportSamplewise(Metric):
 
     @overrides
     def __call__(self,
-                 predictions: List[Any],
-                 gold_labels: List[Any],
+                 predictions: torch.Tensor,
+                 gold_labels: torch.Tensor,
                  metadata: List[Any],
                  **kwargs):
+        predictions: List[Any] = predictions.tolist()
+        gold_labels: List[Any] = gold_labels.tolist()
+
         for sample_pred, sample_true, sample_metadata in zip(predictions,
                                                              gold_labels,
                                                              metadata):

@@ -1,7 +1,7 @@
 import logging
 import os
 import re
-from typing import Dict, Iterator, List, Tuple, Any
+from typing import Dict, Iterator, Tuple, Any
 
 from allennlp.data import DatasetReader, Instance, TokenIndexer, Tokenizer
 from allennlp.data.tokenizers import SentenceSplitter
@@ -85,7 +85,7 @@ class APFTriggerReader(TriggerReader):
             token_ends[end] = idx
 
         # Prepare both char-based and token-based span offsets.
-        trigger_labels = ['O' for token in tokens]
+        trigger_labels = ['O' for _ in tokens]
         trigger_char_seqs: Dict[Tuple[int, int], str] = dict()
         trigger_token_seqs: Dict[Tuple[int, int], str] = dict()
         for (start, end), label in trigger_annotations.items():
