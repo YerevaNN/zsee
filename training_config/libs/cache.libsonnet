@@ -2,7 +2,7 @@ local util = import 'util.libsonnet';
 
 local enable_cache = false;
 local auto_cache = true;
-local salt = std.extVar('CACHE_SALT');
+local salt = 'aX&hack_';
 local cache_dir = 'caches';
 
 {

@@ -18,12 +18,11 @@ local defaults = {
     'bucketing': false,
     'validation_bucketing': false,
     'num_epochs': 8,
+    'loops_per_epoch': 1,
+    'patience': 100,
 
     # Multi-task setup
-    'primary_loss_weight': 1,
-    'alignment_loss_weight': 0,
     #    'parallel_hops': 0,
-    'triplet_loss_margin': 10,
 
     # Embeddings
     # Temporary disabled
@@ -54,8 +53,6 @@ local defaults = {
     'mismatched_embedder': true,
 
     'pooler': 'just_cls',
-    'alignment_pooler': null,
-    'alignment_symmetric': false,
 
     'filter_train_instances': false,
     'max_pieces': 256,
@@ -63,15 +60,25 @@ local defaults = {
     'mapping_pre_normalization': null,
     'mapping_post_normalization': null,
 
-    'loops_per_epoch': 1,
-    'version': 2,
 
     'parallel_data': 'en-de_parallel_train',
 
     'train_alt': false,
     'translate_train': false,
     'validation_metric': null,
-    'validation_dataset': 'en_val'
+    'validation_dataset': 'en_val',
+
+    'task': 'event_extraction',
+
+    'multi_task_alignment': false,
+    'alignment_loss_weight': 0,
+    'version': 2,
+    'alignment_pooler': null,
+    'alignment_symmetric': false,
+    'triplet_loss_margin': 10,
+    'primary_loss_weight': 1,
+    'task_switcher': 'chain'
+
 };
 
 {

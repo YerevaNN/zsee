@@ -1,6 +1,8 @@
-local lib = {
+local libs = {
     pooler: import 'pooler.libsonnet'
 };
+
+local L = libs;
 
 local mapper(H) = {
     "num_layers": H.num_mapper_layers,
@@ -25,7 +27,7 @@ local mapper(H) = {
         "projection": true,
         "initializer": {},
 
-        "pooler": lib.pooler.get(H, 'pooler'),
+        "pooler": libs.pooler.get(H, 'pooler'),
 
         "text_field_embedder": {
             "type": "mapped",
@@ -52,7 +54,7 @@ local mapper(H) = {
         "type": "embeddings_alignment",
         "map_both": true,
         "distance": "mse",
-        "pooler": lib.pooler.get(H, 'alignment_pooler'),
+        "pooler": libs.pooler.get(H, 'alignment_pooler'),
         "triplet_loss_margin": H.triplet_loss_margin,
         "initializer": {
 #  "regexes": [] + extra_initializers # TODO
@@ -60,5 +62,34 @@ local mapper(H) = {
         "verbose": H.verbose,
         "version": H.version,
         "symmetric": H.alignment_symmetric
-    }
+    },
+
+    wrap_multi_task(primary_model, H)::
+        local alignment_model = self.alignment(H);
+    {
+        "type": "multi-task",
+        "loss_weights": [
+            H.primary_loss_weight,
+            H.alignment_loss_weight
+        ],
+        "models": [
+            primary_model,
+            alignment_model
+        ]
+    },
+
+    get_primary_model(H)::
+        if H.task == 'event_extraction' then
+            self.event_extraction(H)
+        else if H.task == 'nli' then
+            self.nli(H)
+        else
+            error 'Model not implemented!',
+
+    get(H)::
+        local primary_model = self.get_primary_model(H);
+        if H.multi_task_alignment then
+            self.wrap_multi_task(primary_model, H)
+        else
+            primary_model,
 }
